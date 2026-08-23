@@ -107,27 +107,32 @@ const Dashboard = () => {
         </Grid>
       </Grid>
 
-      <Grid container spacing={2.5} sx={{ mb: 3 }}>
-        <Grid item xs={6} sm={3} md={1.5}>
+      {/* Settlement Stats - Row 1: Counts */}
+      <Grid container spacing={2.5} sx={{ mb: 2 }}>
+        <Grid item xs={6} sm={4} md={2.4}>
           <StatCard title="Settlement Pending" value={settlements.pending || 0} icon={SettlementIcon} color="#D97706" />
         </Grid>
-        <Grid item xs={6} sm={3} md={1.5}>
+        <Grid item xs={6} sm={4} md={2.4}>
           <StatCard title="Settlement Today" value={settlements.today || 0} icon={SettlementIcon} color="#1F4E79" />
         </Grid>
-        <Grid item xs={6} sm={3} md={1.5}>
+        <Grid item xs={6} sm={4} md={2.4}>
           <StatCard title="Completed" value={settlements.completed || 0} icon={SettlementIcon} color="#059669" />
         </Grid>
-        <Grid item xs={6} sm={3} md={1.5}>
+        <Grid item xs={6} sm={4} md={2.4}>
           <StatCard title="Partial" value={settlements.partial || 0} icon={PendingIcon} color="#7C3AED" />
         </Grid>
-        <Grid item xs={6} sm={3} md={1.5}>
+        <Grid item xs={6} sm={4} md={2.4}>
           <StatCard title="On Hold" value={settlements.onHold || 0} icon={PendingIcon} color="#B45309" />
         </Grid>
-        <Grid item xs={6} sm={3} md={2.25}>
-          <StatCard title="Approved Value" value={`Rs. ${(settlements.totalApprovedValue || 0).toLocaleString('en-IN')}`} icon={AmountIcon} color="#D4AF37" />
+      </Grid>
+
+      {/* Settlement Stats - Row 2: Values */}
+      <Grid container spacing={2.5} sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={6} md={4}>
+          <StatCard title="Approved Value" value={`₹${(settlements.totalApprovedValue || 0).toLocaleString('en-IN')}`} icon={AmountIcon} color="#D4AF37" />
         </Grid>
-        <Grid item xs={6} sm={3} md={2.25}>
-          <StatCard title="Pending Settlement Value" value={`Rs. ${(settlements.pendingSettlementValue || 0).toLocaleString('en-IN')}`} icon={TrendIcon} color="#DC2626" />
+        <Grid item xs={12} sm={6} md={4}>
+          <StatCard title="Pending Settlement" value={`₹${(settlements.pendingSettlementValue || 0).toLocaleString('en-IN')}`} icon={TrendIcon} color="#DC2626" />
         </Grid>
       </Grid>
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Autocomplete, CircularProgress, TextField } from '@mui/material';
 
 const SearchableDropdown = ({
@@ -16,32 +16,74 @@ const SearchableDropdown = ({
   size = 'small',
   disabled = false,
   placeholder = 'Search...',
+  debounceMs = 350,
+  clearable = true,
 }) => {
   const [inputValue, setInputValue] = useState('');
+  const abortRef = useRef(null);
+  const timerRef = useRef(null);
 
+  // Debounced search with AbortController
   useEffect(() => {
     if (!onSearch) return undefined;
-    const timer = window.setTimeout(() => onSearch(inputValue), 300);
-    return () => window.clearTimeout(timer);
-  }, [inputValue, onSearch]);
+
+    // Clear previous timer
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    // Abort previous request
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+
+    timerRef.current = setTimeout(() => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+      onSearch(inputValue, controller.signal);
+    }, debounceMs);
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [inputValue, onSearch, debounceMs]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, []);
 
   const selectedOption = useMemo(() => {
     const stringValue = String(value || '');
+    if (!stringValue) return null;
     return options.find((option) => String(getOptionValue(option)) === stringValue) || null;
   }, [getOptionValue, options, value]);
+
+  const handleInputChange = useCallback((event, nextValue, reason) => {
+    setInputValue(nextValue);
+  }, []);
+
+  const handleChange = useCallback((event, option) => {
+    onChange(option ? getOptionValue(option) : '', option);
+  }, [onChange, getOptionValue]);
 
   return (
     <Autocomplete
       options={options}
       value={selectedOption}
       inputValue={inputValue}
-      onInputChange={(event, nextValue) => setInputValue(nextValue)}
-      onChange={(event, option) => onChange(option ? getOptionValue(option) : '')}
+      onInputChange={handleInputChange}
+      onChange={handleChange}
       getOptionLabel={(option) => getOptionLabel(option)}
       isOptionEqualToValue={(option, selected) => String(getOptionValue(option)) === String(getOptionValue(selected))}
       loading={loading}
       disabled={disabled}
+      disableClearable={!clearable}
       noOptionsText="No matching records found"
+      filterOptions={onSearch ? (x) => x : undefined}
       renderInput={(params) => (
         <TextField
           {...params}

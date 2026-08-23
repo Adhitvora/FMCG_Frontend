@@ -18,6 +18,7 @@ import CartonMerge from './pages/CartonMerge';
 import InvoiceList from './pages/InvoiceList';
 import AuditLogPage from './pages/AuditLogPage';
 import SettlementManagement from './pages/SettlementManagement';
+import ProductMaster from './pages/ProductMaster';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -84,6 +85,7 @@ const App = () => {
                 <Route path="/masters/companies" element={<CompanyMaster />} />
                 <Route path="/masters/parties" element={<PartyMaster />} />
                 <Route path="/masters/transports" element={<TransportMaster />} />
+                <Route path="/masters/products" element={<ProductMaster />} />
                 <Route path="/replacements" element={<ReplacementList />} />
                 <Route path="/carton-merge" element={<CartonMerge />} />
                 <Route path="/approvals" element={<ReplacementList />} />

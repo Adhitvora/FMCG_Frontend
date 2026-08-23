@@ -41,8 +41,6 @@ const emptyProduct = () => ({
   mrp: '',
   quantity: '',
   unit: 'pcs',
-  batchNo: '',
-  expiryDate: '',
   remarks: '',
 });
 
@@ -137,8 +135,11 @@ const SettlementManagement = () => {
       setLastSaleInvoiceNo(full.lastSaleInvoiceNo || '');
       setRemarks(full.remarks || '');
       setSentProducts(full.sentProducts?.length ? full.sentProducts.map((product) => ({
-        ...product,
-        expiryDate: product.expiryDate ? format(new Date(product.expiryDate), 'yyyy-MM-dd') : '',
+        productName: product.productName || '',
+        mrp: product.mrp || '',
+        quantity: product.quantity || '',
+        unit: product.unit || 'pcs',
+        remarks: product.remarks || '',
       })) : [emptyProduct()]);
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to open settlement');
@@ -383,12 +384,11 @@ const SettlementManagement = () => {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>Product Name</TableCell>
+                      <TableCell sx={{ minWidth: 220 }}>Product Name</TableCell>
                       <TableCell align="right">MRP</TableCell>
                       <TableCell align="right">Quantity</TableCell>
                       <TableCell>Unit</TableCell>
-                      <TableCell>Batch</TableCell>
-                      <TableCell>Expiry</TableCell>
+                      <TableCell>Remarks</TableCell>
                       <TableCell align="right">Value</TableCell>
                       <TableCell align="center">Remove</TableCell>
                     </TableRow>
@@ -396,12 +396,11 @@ const SettlementManagement = () => {
                   <TableBody>
                     {sentProducts.map((product, index) => (
                       <TableRow key={index}>
-                        <TableCell><TextField size="small" fullWidth value={product.productName} onChange={(e) => updateProduct(index, 'productName', e.target.value)} placeholder="250g Kashmiri" /></TableCell>
+                        <TableCell sx={{ minWidth: 220 }}><TextField size="small" fullWidth value={product.productName} onChange={(e) => updateProduct(index, 'productName', e.target.value)} placeholder="250g Kashmiri" /></TableCell>
                         <TableCell><TextField size="small" type="number" value={product.mrp} onChange={(e) => updateProduct(index, 'mrp', e.target.value)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
                         <TableCell><TextField size="small" type="number" value={product.quantity} onChange={(e) => updateProduct(index, 'quantity', e.target.value)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
                         <TableCell><TextField size="small" value={product.unit || 'pcs'} onChange={(e) => updateProduct(index, 'unit', e.target.value)} /></TableCell>
-                        <TableCell><TextField size="small" value={product.batchNo || ''} onChange={(e) => updateProduct(index, 'batchNo', e.target.value)} /></TableCell>
-                        <TableCell><TextField size="small" type="date" value={product.expiryDate || ''} onChange={(e) => updateProduct(index, 'expiryDate', e.target.value)} /></TableCell>
+                        <TableCell><TextField size="small" value={product.remarks || ''} onChange={(e) => updateProduct(index, 'remarks', e.target.value)} placeholder="Optional" /></TableCell>
                         <TableCell align="right" sx={{ fontWeight: 800 }}>{money(productValue(product))}</TableCell>
                         <TableCell align="center"><IconButton size="small" color="error" onClick={() => removeProduct(index)}><RemoveIcon fontSize="small" /></IconButton></TableCell>
                       </TableRow>

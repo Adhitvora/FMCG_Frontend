@@ -1,10 +1,12 @@
 import axios from 'axios';
+import { API_URL } from '../config/api';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true,
 });
 
 // Request interceptor - attach token
@@ -38,10 +40,7 @@ api.interceptors.response.use(
           throw new Error('No refresh token');
         }
 
-        const response = await axios.post(
-          `${import.meta.env.VITE_API_URL}/auth/refresh`,
-          { refreshToken }
-        );
+        const response = await api.post('/auth/refresh', { refreshToken });
 
         const { accessToken, refreshToken: newRefreshToken } =
           response.data.data;

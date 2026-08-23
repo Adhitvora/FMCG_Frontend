@@ -40,6 +40,7 @@ import {
   ListAlt as AuditIcon,
   CheckCircle as ApprovalIcon,
   AssignmentTurnedIn as SettlementIcon,
+  Inventory2 as ProductIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 
@@ -78,6 +79,7 @@ const DashboardLayout = () => {
         { text: 'Party Master', icon: <PartyIcon />, path: '/masters/parties' },
         { text: 'Transport Master', icon: <TransportIcon />, path: '/masters/transports' },
         ...(isSuperAdmin() ? [{ text: 'User Master', icon: <UserIcon />, path: '/masters/users' }] : []),
+        { text: 'Product Register', icon: <ProductIcon />, path: '/masters/products' },
       ],
     },
     {
