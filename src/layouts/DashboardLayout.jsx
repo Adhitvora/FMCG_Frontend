@@ -121,35 +121,26 @@ const DashboardLayout = () => {
       {/* Logo / Brand */}
       <Box
         sx={{
-          p: 2.5,
+          
           display: 'flex',
           alignItems: 'center',
+          justifyContent:'center',
           gap: 1.5,
-          background: 'linear-gradient(135deg, #0D1B2A 0%, #1F4E79 100%)',
+          background: 'linear-gradient(135deg, #0D1B2A 0%, #99b8d5 100%)',
         }}
       >
         <Box
           component="img"
-          src="/uploads/logos/logo-1785663560330-694249617.png"
+          src="/Hetarya.png"
           alt="Het Arya Logo"
           sx={{
-            width: 42,
-            height: 42,
+            width: 200,
+            height: 150,
             objectFit: 'contain',
             borderRadius: 1,
           }}
         />
-        <Box>
-          <Typography
-            variant="subtitle2"
-            sx={{ color: '#C8A95B', fontWeight: 700, fontSize: '0.85rem', lineHeight: 1.2 }}
-          >
-            HET ARYA
-          </Typography>
-          <Typography sx={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.7rem', fontWeight: 500 }}>
-            FMCG ERP System
-          </Typography>
-        </Box>
+        
       </Box>
 
       <Divider />
