@@ -16,6 +16,7 @@ import {
 import { replacementService } from '../services/replacement.service';
 import { companyService } from '../services/company.service';
 import SearchableDropdown from '../components/SearchableDropdown';
+import SearchableProductDropdown from '../components/SearchableProductDropdown';
 import { partyService } from '../services/party.service';
 import { transportService } from '../services/transport.service';
 import { useAuth } from '../context/AuthContext';
@@ -41,6 +42,11 @@ const settlementColors = {
 const money = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(value || 0));
 const shortDate = (value) => (value ? format(new Date(value), 'dd/MM/yy') : '-');
 const displayStatus = (value) => String(value || '').replace(/_/g, ' ');
+const approvalProductValue = (product = {}) => {
+  const explicitValue = Number(product.totalValue || product.value || 0);
+  if (explicitValue > 0) return explicitValue;
+  return Number(product.mrp || 0) * Number(product.quantity || 0);
+};
 
 const StatusBadge = ({ value, type = 'approval' }) => {
   const palette = type === 'settlement' ? settlementColors : statusColors;
@@ -54,6 +60,20 @@ const InfoItem = ({ label, value }) => (
     <Typography variant="body2" fontWeight={650} sx={{ overflowWrap: 'anywhere' }}>{value || '-'}</Typography>
   </Box>
 );
+
+const emptyApprovalProduct = () => ({
+  productId: '',
+  productName: '',
+  productNameSnapshot: '',
+  sku: '',
+  productCode: '',
+  mrp: '',
+  mrpSnapshot: '',
+  masterMrpSnapshot: '',
+  quantity: '',
+  totalValue: '',
+  status: 'Approved',
+});
 
 const DocumentButtons = ({ label, urls = [] }) => {
   const files = urls.filter(Boolean);
@@ -362,7 +382,7 @@ const ReplacementWorkflowList = () => {
   const [approvalDialog, setApprovalDialog] = useState(null);
   const [viewDialog, setViewDialog] = useState(null);
   const [approvalMode, setApprovalMode] = useState('Amount');
-  const [approvalProducts, setApprovalProducts] = useState([{ productName: '', mrp: '', quantity: '' }]);
+  const [approvalProducts, setApprovalProducts] = useState([emptyApprovalProduct()]);
 
   const handleSearchChange = (e) => {
     setSearch(e.target.value);
@@ -434,10 +454,48 @@ const ReplacementWorkflowList = () => {
   const onApprovalSubmit = (formData) => {
     const fd = new FormData();
     Object.entries(formData).forEach(([k, v]) => { if (v !== undefined && v !== '') fd.append(k, v); });
+    fd.set('approvalType', approvalMode);
     if (approvalMode === 'Product') {
-      fd.append('approvalProducts', JSON.stringify(approvalProducts));
+      const productRows = approvalProducts.map((product) => ({
+        ...product,
+        totalValue: approvalProductValue(product),
+      }));
+      fd.set('approvalAmount', String(productRows.reduce((sum, product) => sum + Number(product.totalValue || 0), 0)));
+      fd.append('approvalProducts', JSON.stringify(productRows));
     }
     approvalMutation.mutate({ id: approvalDialog._id, data: fd });
+  };
+
+  const updateApprovalProduct = (index, patch) => {
+    setApprovalProducts((rows) => rows.map((row, i) => {
+      if (i !== index) return row;
+      const next = { ...row, ...patch };
+      next.totalValue = approvalProductValue(next);
+      return next;
+    }));
+  };
+
+  const selectApprovalProduct = (index, selectedProduct) => {
+    setApprovalProducts((rows) => rows.map((row, i) => {
+      if (i !== index) return row;
+      if (!selectedProduct) return { ...row, productId: '', productName: '', productNameSnapshot: '', sku: '', productCode: '' };
+
+      const productName = selectedProduct.productName || selectedProduct.name || '';
+      const currentMrp = row.mrp !== undefined && row.mrp !== '' ? row.mrp : selectedProduct.mrp || '';
+      return {
+        ...row,
+        productId: selectedProduct.productId || selectedProduct._id,
+        productName,
+        productNameSnapshot: productName,
+        sku: selectedProduct.sku || '',
+        productCode: selectedProduct.productCode || selectedProduct.code || '',
+        mrp: currentMrp,
+        mrpSnapshot: currentMrp,
+        masterMrpSnapshot: selectedProduct.mrp || 0,
+        totalValue: approvalProductValue({ ...row, mrp: currentMrp }),
+        status: row.status || 'Approved',
+      };
+    }));
   };
 
   const openDispatchDialog = (rep) => {
@@ -455,7 +513,17 @@ const ReplacementWorkflowList = () => {
   const openApprovalDialog = (rep) => {
     setApprovalDialog(rep);
     setApprovalMode(rep.approvalType || 'Amount');
-    setApprovalProducts(rep.approvalProducts?.length ? rep.approvalProducts : [{ productName: '', mrp: '', quantity: '' }]);
+    setApprovalProducts(rep.approvalProducts?.length
+      ? rep.approvalProducts.map((product) => ({
+        ...emptyApprovalProduct(),
+        ...product,
+        productId: product.productId?._id || product.productId || '',
+        productName: product.productName || product.productNameSnapshot || '',
+        productNameSnapshot: product.productNameSnapshot || product.productName || '',
+        totalValue: approvalProductValue(product),
+        status: product.status || 'Approved',
+      }))
+      : [emptyApprovalProduct()]);
     resetApproval({
       approvalType: rep.approvalType || 'Amount',
       approvalStatus: rep.approvalStatus || 'Pending',
@@ -762,10 +830,23 @@ const ReplacementWorkflowList = () => {
       </Dialog>
 
       {/* Approval Dialog */}
-      <Dialog open={!!approvalDialog} onClose={() => setApprovalDialog(null)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog
+        open={!!approvalDialog}
+        onClose={() => setApprovalDialog(null)}
+        fullWidth
+        maxWidth={false}
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            width: '90vw',
+            maxWidth: 1400,
+            maxHeight: '90vh',
+          },
+        }}
+      >
         <DialogTitle sx={{ fontWeight: 700 }}>Update Approval — {approvalDialog?.replacementId}</DialogTitle>
         <form onSubmit={handleApproval(onApprovalSubmit)}>
-          <DialogContent>
+          <DialogContent sx={{ overflowY: 'auto' }}>
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <Controller name="approvalStatus" control={approvalControl}
@@ -802,19 +883,36 @@ const ReplacementWorkflowList = () => {
                 <Grid item xs={12}>
                   <Typography variant="subtitle2" fontWeight={700} mb={1}>Approved Products</Typography>
                   {approvalProducts.map((product, index) => {
-                    const total = Number(product.totalValue || product.value || 0) || (Number(product.mrp || 0) * Number(product.quantity || 0));
+                    const total = approvalProductValue(product);
                     return (
-                      <Grid container spacing={1} key={index} sx={{ mb: 1 }}>
-                        <Grid item xs={12} sm={4}><TextField fullWidth size="small" label="Product Name" value={product.productName} onChange={(e) => setApprovalProducts((rows) => rows.map((row, i) => i === index ? { ...row, productName: e.target.value } : row))} /></Grid>
-                        <Grid item xs={4} sm={2}><TextField fullWidth size="small" label="MRP" type="number" value={product.mrp} onChange={(e) => setApprovalProducts((rows) => rows.map((row, i) => i === index ? { ...row, mrp: e.target.value } : row))} /></Grid>
-                        <Grid item xs={4} sm={2}><TextField fullWidth size="small" label="Qty" type="number" value={product.quantity} onChange={(e) => setApprovalProducts((rows) => rows.map((row, i) => i === index ? { ...row, quantity: e.target.value } : row))} /></Grid>
-                        <Grid item xs={4} sm={2}><TextField fullWidth size="small" label="Approved Value" type="number" value={product.totalValue ?? product.value ?? total} onChange={(e) => setApprovalProducts((rows) => rows.map((row, i) => i === index ? { ...row, totalValue: e.target.value } : row))} /></Grid>
-                        <Grid item xs={12} sm={1}><Button color="error" onClick={() => setApprovalProducts((rows) => rows.length === 1 ? rows : rows.filter((_, i) => i !== index))}>Remove</Button></Grid>
+                      <Grid container spacing={1} key={index} sx={{ mb: 1, alignItems: 'center' }}>
+                        <Grid item xs={12} md={4}>
+                          <SearchableProductDropdown
+                            label="Product"
+                            placeholder="Search Product Master..."
+                            value={product.productId}
+                            selectedProduct={product}
+                            companyId={approvalDialog?.company?._id || approvalDialog?.company}
+                            onChange={(selectedProduct) => selectApprovalProduct(index, selectedProduct)}
+                            required
+                          />
+                        </Grid>
+                        <Grid item xs={6} sm={3} md={1.4}><TextField fullWidth size="small" label="MRP" type="number" value={product.mrp} onChange={(e) => updateApprovalProduct(index, { mrp: e.target.value, mrpSnapshot: e.target.value })} /></Grid>
+                        <Grid item xs={6} sm={3} md={1.4}><TextField fullWidth size="small" label="Quantity" type="number" value={product.quantity} onChange={(e) => updateApprovalProduct(index, { quantity: e.target.value })} /></Grid>
+                        <Grid item xs={6} sm={3} md={1.6}><TextField fullWidth size="small" label="Value" type="number" value={total || ''} InputProps={{ readOnly: true }} /></Grid>
+                        <Grid item xs={6} sm={3} md={1.7}>
+                          <TextField select fullWidth size="small" label="Status" value={product.status || 'Approved'} onChange={(e) => updateApprovalProduct(index, { status: e.target.value })}>
+                            <MenuItem value="Approved">Approved</MenuItem>
+                            <MenuItem value="Rejected">Rejected</MenuItem>
+                            <MenuItem value="Pending">Pending</MenuItem>
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} md={1.4}><Button fullWidth color="error" onClick={() => setApprovalProducts((rows) => rows.length === 1 ? rows : rows.filter((_, i) => i !== index))}>Remove</Button></Grid>
                       </Grid>
                     );
                   })}
-                  <Button size="small" onClick={() => setApprovalProducts((rows) => [...rows, { productName: '', mrp: '', quantity: '' }])}>Add Product</Button>
-                  <Typography variant="body2" fontWeight={700} mt={1}>Total Product Approval Value: {approvalProducts.reduce((sum, product) => sum + (Number(product.totalValue || product.value || 0) || (Number(product.mrp || 0) * Number(product.quantity || 0))), 0)}</Typography>
+                  <Button size="small" startIcon={<AddIcon />} onClick={() => setApprovalProducts((rows) => [...rows, emptyApprovalProduct()])}>Add Product</Button>
+                  <Typography variant="body2" fontWeight={700} mt={1}>Total Product Approval Value: {money(approvalProducts.reduce((sum, product) => sum + approvalProductValue(product), 0))}</Typography>
                 </Grid>
               )}
               <Grid item xs={6} sm={4}>

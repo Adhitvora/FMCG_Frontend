@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box, Button, Card, Chip, CircularProgress, Dialog, DialogActions, DialogContent,
@@ -16,6 +16,7 @@ import {
 } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import { productService } from '../services/product.service';
+import { productQueryKeys, refreshProductQueries } from '../services/productQueries';
 import { companyService } from '../services/company.service';
 import SearchableDropdown from '../components/SearchableDropdown';
 import { useAuth } from '../context/AuthContext';
@@ -42,6 +43,7 @@ const ProductMaster = () => {
   const [importDialog, setImportDialog] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importCompanyId, setImportCompanyId] = useState('');
+  const [importPreview, setImportPreview] = useState(null);
   const [deleteDialog, setDeleteDialog] = useState(null);
   const searchTimer = useRef(null);
 
@@ -62,7 +64,7 @@ const ProductMaster = () => {
   };
 
   const { data, isLoading } = useQuery({
-    queryKey: ['products', queryParams],
+    queryKey: productQueryKeys.list(queryParams),
     queryFn: () => productService.getProducts(queryParams),
   });
 
@@ -77,8 +79,8 @@ const ProductMaster = () => {
 
   const createMutation = useMutation({
     mutationFn: (payload) => productService.createProduct(payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
+    onSuccess: async () => {
+      await refreshProductQueries(queryClient);
       setFormDialog(null);
       toast.success('Product created successfully');
     },
@@ -87,8 +89,8 @@ const ProductMaster = () => {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }) => productService.updateProduct(id, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
+    onSuccess: async () => {
+      await refreshProductQueries(queryClient);
       setFormDialog(null);
       toast.success('Product updated successfully');
     },
@@ -97,24 +99,51 @@ const ProductMaster = () => {
 
   const deleteMutation = useMutation({
     mutationFn: (id) => productService.deleteProduct(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
+    onSuccess: async () => {
+      await refreshProductQueries(queryClient);
       setDeleteDialog(null);
-      toast.success('Product deleted successfully');
+      toast.success('Product deactivated successfully');
     },
     onError: (err) => toast.error(err.response?.data?.message || 'Failed to delete product'),
   });
 
+  const getImportErrorMessage = (err) => {
+    const message = err.response?.data?.message || '';
+    if (
+      !message
+      || message.includes('path argument')
+      || message.includes('Received undefined')
+      || message.includes('Cannot read properties')
+    ) {
+      return 'Excel import failed. Unable to process the uploaded Excel file.';
+    }
+    return message;
+  };
+
+  const previewMutation = useMutation({
+    mutationFn: ({ file, companyId }) => productService.previewImport(file, companyId),
+    onSuccess: (result) => {
+      const previewData = result.data || {};
+      setImportPreview(previewData);
+      toast.success(`Preview ready: ${previewData.validCount || 0} valid, ${previewData.errorCount || 0} invalid`);
+    },
+    onError: (err) => {
+      setImportPreview(null);
+      toast.error(getImportErrorMessage(err));
+    },
+  });
+
   const importMutation = useMutation({
     mutationFn: ({ file, companyId }) => productService.importProducts(file, companyId),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
+    onSuccess: async (result) => {
+      await refreshProductQueries(queryClient);
       setImportDialog(false);
       setImportFile(null);
+      setImportPreview(null);
       const d = result.data || {};
-      toast.success(`Import complete: ${d.inserted || 0} added, ${d.skipped || 0} skipped`);
+      toast.success(`Import complete: ${d.inserted || 0} added, ${d.updated || 0} updated, ${d.skipped || 0} skipped`);
     },
-    onError: (err) => toast.error(err.response?.data?.message || 'Import failed'),
+    onError: (err) => toast.error(getImportErrorMessage(err)),
   });
 
   const openCreate = () => {
@@ -151,12 +180,77 @@ const ProductMaster = () => {
     }
   };
 
+  const validateImportFile = (file) => {
+    if (!file) return 'Please select a file';
+    const allowedExtensions = ['.xlsx', '.xls', '.csv'];
+    const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    if (!allowedExtensions.includes(extension)) return 'Only .xlsx, .xls, or .csv files are allowed.';
+    if (file.size > 10 * 1024 * 1024) return 'Excel file is too large. Maximum allowed size is 10 MB.';
+    return '';
+  };
+
+  const handleImportFileChange = (e) => {
+    const file = e.target.files[0] || null;
+    const error = validateImportFile(file);
+    if (error && file) {
+      toast.error(error);
+      e.target.value = '';
+      setImportFile(null);
+      setImportPreview(null);
+      return;
+    }
+    setImportFile(file);
+    setImportPreview(null);
+  };
+
+  const closeImportDialog = () => {
+    setImportDialog(false);
+    setImportFile(null);
+    setImportPreview(null);
+    setImportCompanyId('');
+  };
+
+  const handlePreviewImport = () => {
+    if (!importFile) { toast.error('Please select a file'); return; }
+    const error = validateImportFile(importFile);
+    if (error) { toast.error(error); return; }
+    previewMutation.mutate({ file: importFile, companyId: importCompanyId });
+  };
+
   const handleImport = () => {
     if (!importFile) { toast.error('Please select a file'); return; }
+    if (!importPreview) { toast.error('Preview the Excel file before importing'); return; }
+    if ((importPreview.validCount || 0) === 0) { toast.error('No valid product rows to import'); return; }
     importMutation.mutate({ file: importFile, companyId: importCompanyId });
   };
 
-  const money = (v) => v ? `₹${Number(v).toLocaleString('en-IN')}` : '-';
+  const downloadErrorReport = () => {
+    const invalidRows = (importPreview?.preview || []).filter((row) => row.status === 'Invalid');
+    if (!invalidRows.length) return;
+
+    const escapeCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const csv = [
+      ['Excel Row', 'Product Name', 'Error', 'Reason'].map(escapeCsv).join(','),
+      ...invalidRows.map((row) => [
+        row.row,
+        row.name,
+        row.error,
+        row.reason || (row.errors || []).join('; '),
+      ].map(escapeCsv).join(',')),
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'product_import_errors.csv');
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const money = (v) => v !== undefined && v !== null && v !== '' ? `Rs. ${Number(v).toLocaleString('en-IN')}` : '-';
 
   return (
     <Box>
@@ -226,7 +320,7 @@ const ProductMaster = () => {
               {isLoading ? (
                 <TableRow><TableCell colSpan={8} align="center" sx={{ py: 6 }}><CircularProgress size={30} /></TableCell></TableRow>
               ) : products.length === 0 ? (
-                <TableRow><TableCell colSpan={8} align="center" sx={{ py: 6, color: '#6B7280' }}>No products found. Add products manually or import via Excel.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} align="center" sx={{ py: 6, color: '#6B7280' }}>No products found. Use Add Product or import via Excel.</TableCell></TableRow>
               ) : (
                 products.map((product, idx) => (
                   <TableRow key={product._id} hover>
@@ -255,7 +349,7 @@ const ProductMaster = () => {
                           </IconButton>
                         </Tooltip>
                         {isSuperAdmin() && (
-                          <Tooltip title="Delete Product">
+                          <Tooltip title="Deactivate Product">
                             <IconButton size="small" onClick={() => setDeleteDialog(product)}>
                               <DeleteIcon fontSize="small" sx={{ color: '#DC2626' }} />
                             </IconButton>
@@ -324,27 +418,27 @@ const ProductMaster = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Delete Confirmation */}
+      {/* Deactivate Confirmation */}
       <Dialog open={!!deleteDialog} onClose={() => setDeleteDialog(null)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-        <DialogTitle sx={{ fontWeight: 800 }}>Delete Product</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800 }}>Deactivate Product</DialogTitle>
         <DialogContent>
-          <Typography>Are you sure you want to delete <strong>{deleteDialog?.name || deleteDialog?.productName}</strong>?</Typography>
-          <Typography variant="body2" color="error" mt={1}>This action cannot be undone.</Typography>
+          <Typography>Deactivate <strong>{deleteDialog?.name || deleteDialog?.productName}</strong>?</Typography>
+          <Typography variant="body2" color="error" mt={1}>Inactive products will not appear in new transaction dropdowns.</Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button variant="outlined" onClick={() => setDeleteDialog(null)}>Cancel</Button>
           <Button variant="contained" color="error" onClick={() => deleteMutation.mutate(deleteDialog._id)} disabled={deleteMutation.isPending}>
-            {deleteMutation.isPending ? <CircularProgress size={18} /> : 'Delete'}
+            {deleteMutation.isPending ? <CircularProgress size={18} /> : 'Deactivate'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Import Dialog */}
-      <Dialog open={importDialog} onClose={() => setImportDialog(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+      <Dialog open={importDialog} onClose={closeImportDialog} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
         <DialogTitle sx={{ fontWeight: 800 }}>Bulk Import Products</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="#6B7280" mb={2}>
-            Upload an Excel file (.xlsx) with columns: Product Name*, Product Code, SKU, MRP.
+            Upload an Excel file (.xlsx, .xls, .csv) with columns: Product Name*, Product Code, SKU, MRP, Company.
             Download the sample file for the correct format.
           </Typography>
           <Grid container spacing={2}>
@@ -358,20 +452,90 @@ const ProductMaster = () => {
                 fullWidth
                 type="file"
                 inputProps={{ accept: '.xlsx,.xls,.csv' }}
-                onChange={(e) => setImportFile(e.target.files[0])}
+                onChange={handleImportFileChange}
                 InputLabelProps={{ shrink: true }}
                 label="Excel File"
               />
             </Grid>
             <Grid item xs={12}>
-              <SearchableDropdown label="Company (optional)" value={importCompanyId} onChange={setImportCompanyId} options={companies} />
+              <SearchableDropdown
+                label="Company (optional)"
+                value={importCompanyId}
+                onChange={(value) => {
+                  setImportCompanyId(value);
+                  setImportPreview(null);
+                }}
+                options={companies}
+              />
             </Grid>
+            {importPreview && (
+              <Grid item xs={12}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 1.5 }}>
+                  <Chip label={`${importPreview.totalRows || 0} rows`} size="small" />
+                  <Chip label={`${importPreview.validCount || 0} valid`} color="success" size="small" />
+                  <Chip label={`${importPreview.errorCount || 0} invalid`} color={importPreview.errorCount ? 'error' : 'default'} size="small" />
+                  {(importPreview.errorCount || 0) > 0 && (
+                    <Button variant="outlined" size="small" startIcon={<DownloadIcon />} onClick={downloadErrorReport}>
+                      Download Error Report
+                    </Button>
+                  )}
+                </Box>
+                <TableContainer sx={{ maxHeight: 360, border: '1px solid #E5E7EB', borderRadius: 1 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700 }}>Row</TableCell>
+                        <TableCell sx={{ fontWeight: 700, minWidth: 180 }}>Product Name</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Code</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>SKU</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }} align="right">MRP</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {(importPreview.preview || []).map((row) => (
+                        <TableRow key={`${row.row}-${row.name}-${row.productCode}`} hover>
+                          <TableCell>{row.row}</TableCell>
+                          <TableCell>{row.name || '-'}</TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{row.productCode || '-'}</TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{row.sku || '-'}</TableCell>
+                          <TableCell align="right">{row.mrp !== null && row.mrp !== undefined ? money(row.mrp) : '-'}</TableCell>
+                          <TableCell>{row.companyName || '-'}</TableCell>
+                          <TableCell>
+                            <Tooltip title={row.reason || row.status}>
+                              <Chip
+                                label={row.status}
+                                size="small"
+                                color={row.status === 'Valid' ? 'success' : 'error'}
+                                sx={{ fontWeight: 700 }}
+                              />
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Grid>
+            )}
           </Grid>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button variant="outlined" onClick={() => setImportDialog(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleImport} disabled={importMutation.isPending || !importFile}>
-            {importMutation.isPending ? <CircularProgress size={18} /> : 'Import'}
+          <Button variant="outlined" onClick={closeImportDialog}>Cancel</Button>
+          <Button
+            variant="outlined"
+            onClick={handlePreviewImport}
+            disabled={previewMutation.isPending || importMutation.isPending || !importFile}
+          >
+            {previewMutation.isPending ? <CircularProgress size={18} /> : 'Preview'}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleImport}
+            disabled={importMutation.isPending || previewMutation.isPending || !importFile || !importPreview || (importPreview.validCount || 0) === 0}
+          >
+            {importMutation.isPending ? <CircularProgress size={18} /> : 'Import Valid Rows'}
           </Button>
         </DialogActions>
       </Dialog>

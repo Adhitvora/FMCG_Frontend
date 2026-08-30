@@ -43,22 +43,19 @@ export const productService = {
     window.URL.revokeObjectURL(url);
   },
 
-  previewImport: async (file) => {
+  previewImport: async (file, companyId) => {
     const formData = new FormData();
-    formData.append('excelFile', file);
-    const response = await api.post('/products/import/preview', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    formData.append('file', file);
+    if (companyId) formData.append('companyId', companyId);
+    const response = await api.post('/products/import/preview', formData);
     return response.data;
   },
 
   importProducts: async (file, companyId) => {
     const formData = new FormData();
-    formData.append('excelFile', file);
+    formData.append('file', file);
     if (companyId) formData.append('companyId', companyId);
-    const response = await api.post('/products/import', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    const response = await api.post('/products/import', formData);
     return response.data;
   },
 };

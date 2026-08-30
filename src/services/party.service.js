@@ -57,9 +57,7 @@ export const partyService = {
     const formData = new FormData();
     formData.append('excelFile', file);
     formData.append('strategy', strategy);
-    const response = await api.post('/parties/import', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    const response = await api.post('/parties/import', formData);
     return response.data;
   },
 };

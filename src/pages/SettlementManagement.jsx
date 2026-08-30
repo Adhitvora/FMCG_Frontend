@@ -22,6 +22,7 @@ import { settlementService } from '../services/settlement.service';
 import { companyService } from '../services/company.service';
 import { partyService } from '../services/party.service';
 import SearchableDropdown from '../components/SearchableDropdown';
+import SearchableProductDropdown from '../components/SearchableProductDropdown';
 import { useAuth } from '../context/AuthContext';
 
 const statusColors = {
@@ -37,8 +38,14 @@ const formatDate = (value) => (value ? format(new Date(value), 'dd/MM/yyyy') : '
 const money = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(value || 0));
 
 const emptyProduct = () => ({
+  productId: '',
   productName: '',
+  productNameSnapshot: '',
+  sku: '',
+  productCode: '',
   mrp: '',
+  mrpSnapshot: '',
+  masterMrpSnapshot: '',
   quantity: '',
   unit: 'pcs',
   remarks: '',
@@ -135,8 +142,14 @@ const SettlementManagement = () => {
       setLastSaleInvoiceNo(full.lastSaleInvoiceNo || '');
       setRemarks(full.remarks || '');
       setSentProducts(full.sentProducts?.length ? full.sentProducts.map((product) => ({
+        productId: product.productId || '',
         productName: product.productName || '',
+        productNameSnapshot: product.productNameSnapshot || product.productName || '',
+        sku: product.sku || '',
+        productCode: product.productCode || '',
         mrp: product.mrp || '',
+        mrpSnapshot: product.mrpSnapshot || product.mrp || '',
+        masterMrpSnapshot: product.masterMrpSnapshot || '',
         quantity: product.quantity || '',
         unit: product.unit || 'pcs',
         remarks: product.remarks || '',
@@ -201,6 +214,26 @@ const SettlementManagement = () => {
 
   const addProduct = () => setSentProducts((rows) => [...rows, emptyProduct()]);
   const updateProduct = (index, key, value) => setSentProducts((rows) => rows.map((row, i) => (i === index ? { ...row, [key]: value } : row)));
+  const selectProduct = (index, selectedProduct) => {
+    setSentProducts((rows) => rows.map((row, i) => {
+      if (i !== index) return row;
+      if (!selectedProduct) return { ...row, productId: '', productName: '', productNameSnapshot: '', sku: '', productCode: '' };
+
+      const productName = selectedProduct.productName || selectedProduct.name || '';
+      const currentMrp = row.mrp !== undefined && row.mrp !== '' ? row.mrp : selectedProduct.mrp || '';
+      return {
+        ...row,
+        productId: selectedProduct.productId || selectedProduct._id,
+        productName,
+        productNameSnapshot: productName,
+        sku: selectedProduct.sku || '',
+        productCode: selectedProduct.productCode || selectedProduct.code || '',
+        mrp: currentMrp,
+        mrpSnapshot: currentMrp,
+        masterMrpSnapshot: selectedProduct.mrp || 0,
+      };
+    }));
+  };
   const removeProduct = (index) => setSentProducts((rows) => (rows.length === 1 ? rows : rows.filter((_, i) => i !== index)));
 
   const statCards = [
@@ -396,8 +429,17 @@ const SettlementManagement = () => {
                   <TableBody>
                     {sentProducts.map((product, index) => (
                       <TableRow key={index}>
-                        <TableCell sx={{ minWidth: 220 }}><TextField size="small" fullWidth value={product.productName} onChange={(e) => updateProduct(index, 'productName', e.target.value)} placeholder="250g Kashmiri" /></TableCell>
-                        <TableCell><TextField size="small" type="number" value={product.mrp} onChange={(e) => updateProduct(index, 'mrp', e.target.value)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
+                        <TableCell sx={{ minWidth: 260 }}>
+                          <SearchableProductDropdown
+                            label="Product Name"
+                            value={product.productId}
+                            selectedProduct={product}
+                            companyId={formDialog?.companyId?._id || formDialog?.companyId}
+                            onChange={(selectedProduct) => selectProduct(index, selectedProduct)}
+                            required
+                          />
+                        </TableCell>
+                        <TableCell><TextField size="small" type="number" value={product.mrp} onChange={(e) => setSentProducts((rows) => rows.map((row, i) => (i === index ? { ...row, mrp: e.target.value, mrpSnapshot: e.target.value } : row)))} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
                         <TableCell><TextField size="small" type="number" value={product.quantity} onChange={(e) => updateProduct(index, 'quantity', e.target.value)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
                         <TableCell><TextField size="small" value={product.unit || 'pcs'} onChange={(e) => updateProduct(index, 'unit', e.target.value)} /></TableCell>
                         <TableCell><TextField size="small" value={product.remarks || ''} onChange={(e) => updateProduct(index, 'remarks', e.target.value)} placeholder="Optional" /></TableCell>
