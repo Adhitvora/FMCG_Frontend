@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, CssBaseline } from '@mui/material';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
@@ -19,6 +19,7 @@ import InvoiceList from './pages/InvoiceList';
 import AuditLogPage from './pages/AuditLogPage';
 import SettlementManagement from './pages/SettlementManagement';
 import ProductMaster from './pages/ProductMaster';
+import NotFound from './pages/NotFound';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,6 +71,7 @@ const App = () => {
                 }
               >
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/dashboard" element={<Dashboard />} />
 
                 {/* Masters */}
                 <Route
@@ -87,6 +89,12 @@ const App = () => {
                 <Route path="/masters/transports" element={<TransportMaster />} />
                 <Route path="/masters/products" element={<ProductMaster />} />
                 <Route path="/replacements" element={<ReplacementList />} />
+                <Route path="/replacements/new" element={<ReplacementList />} />
+                <Route path="/replacements/carton-merge" element={<CartonMerge />} />
+                <Route path="/replacements/approval" element={<ReplacementList />} />
+                <Route path="/replacements/settlement" element={<SettlementManagement />} />
+                <Route path="/replacements/settlement/pending" element={<SettlementManagement />} />
+                <Route path="/replacements/:id" element={<ReplacementList />} />
                 <Route path="/carton-merge" element={<CartonMerge />} />
                 <Route path="/approvals" element={<ReplacementList />} />
                 <Route path="/settlements" element={<SettlementManagement />} />
@@ -102,7 +110,7 @@ const App = () => {
               </Route>
 
               {/* Catch all */}
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<NotFound />} />
             </Routes>
           </AuthProvider>
         </BrowserRouter>
