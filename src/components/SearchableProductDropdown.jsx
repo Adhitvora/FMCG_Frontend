@@ -171,6 +171,11 @@ const SearchableProductDropdown = ({
       filterOptions={(items) => items}
       getOptionLabel={(option) => productNameOf(option)}
       isOptionEqualToValue={(option, current) => String(productIdOf(option)) === String(productIdOf(current))}
+      renderOption={(props, option) => (
+        <li {...props} title={productNameOf(option)}>
+          {productNameOf(option)}
+        </li>
+      )}
       onInputChange={(event, nextValue, reason) => {
         setInputValue(nextValue);
       }}
@@ -193,6 +198,10 @@ const SearchableProductDropdown = ({
           size={size}
           error={Boolean(error || loadError)}
           helperText={message}
+          inputProps={{
+            ...params.inputProps,
+            title: inputValue || productNameOf(selected) || '',
+          }}
           InputProps={{
             ...params.InputProps,
             endAdornment: (

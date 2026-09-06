@@ -42,11 +42,119 @@ const settlementColors = {
 const money = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(value || 0));
 const shortDate = (value) => (value ? format(new Date(value), 'dd/MM/yy') : '-');
 const displayStatus = (value) => String(value || '').replace(/_/g, ' ');
-const approvalProductValue = (product = {}) => {
-  const explicitValue = Number(product.totalValue || product.value || 0);
-  if (explicitValue > 0) return explicitValue;
-  return Number(product.mrp || 0) * Number(product.quantity || 0);
+
+const CALCULATION_MODE = {
+  QTY: 'QTY',
+  VALUE: 'VALUE',
 };
+
+const MRP_SCALE = 4;
+const QTY_SCALE = 4;
+const VALUE_SCALE = 2;
+
+const pow10 = (scale) => 10n ** BigInt(scale);
+
+const parseDecimalUnits = (value, scale, { blankAsZero = false } = {}) => {
+  if (value === undefined || value === null || value === '') return blankAsZero ? 0n : null;
+  const text = String(value).trim().replace(/,/g, '');
+  if (!text) return blankAsZero ? 0n : null;
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(text)) return null;
+
+  const [wholeRaw = '0', fractionRaw = ''] = text.split('.');
+  const whole = wholeRaw || '0';
+  const fraction = fractionRaw.slice(0, scale).padEnd(scale, '0');
+  const roundDigit = Number(fractionRaw[scale] || 0);
+  let units = BigInt(whole) * pow10(scale) + BigInt(fraction || '0');
+  if (roundDigit >= 5) units += 1n;
+  return units;
+};
+
+const roundDivide = (numerator, denominator) => {
+  if (denominator <= 0n) return null;
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  return quotient + (remainder * 2n >= denominator ? 1n : 0n);
+};
+
+const roundScale = (units, fromScale, toScale) => {
+  if (fromScale === toScale) return units;
+  if (fromScale < toScale) return units * pow10(toScale - fromScale);
+  return roundDivide(units, pow10(fromScale - toScale));
+};
+
+const formatUnits = (units, scale) => {
+  if (units === null || units === undefined) return '';
+  const divisor = pow10(scale);
+  const whole = units / divisor;
+  const fraction = String(units % divisor).padStart(scale, '0');
+  return scale === 0 ? String(whole) : `${whole}.${fraction}`;
+};
+
+const unitsToNumber = (units, scale) => Number(formatUnits(units || 0n, scale));
+
+const calculateValueUnits = (mrp, quantity) => {
+  const mrpUnits = parseDecimalUnits(mrp, MRP_SCALE, { blankAsZero: true });
+  const quantityUnits = parseDecimalUnits(quantity, QTY_SCALE);
+  if (mrpUnits === null || quantityUnits === null) return null;
+  return roundScale(mrpUnits * quantityUnits, MRP_SCALE + QTY_SCALE, VALUE_SCALE);
+};
+
+const calculateQuantityUnits = (value, mrp) => {
+  const valueUnits = parseDecimalUnits(value, VALUE_SCALE);
+  const mrpUnits = parseDecimalUnits(mrp, MRP_SCALE, { blankAsZero: true });
+  if (valueUnits === null || mrpUnits === null || mrpUnits <= 0n) return null;
+  return roundDivide(valueUnits * pow10(MRP_SCALE + QTY_SCALE - VALUE_SCALE), mrpUnits);
+};
+
+const formatQuantityInput = (value) => {
+  const units = parseDecimalUnits(value, QTY_SCALE);
+  return units === null ? '' : formatUnits(units, QTY_SCALE);
+};
+
+const formatValueInput = (value) => {
+  const units = parseDecimalUnits(value, VALUE_SCALE);
+  return units === null ? '' : formatUnits(units, VALUE_SCALE);
+};
+
+const normalizeCalculationMode = (mode) => (mode === CALCULATION_MODE.VALUE ? CALCULATION_MODE.VALUE : CALCULATION_MODE.QTY);
+
+const recalculateApprovalProduct = (product, mode = product.calculationMode) => {
+  const calculationMode = normalizeCalculationMode(mode);
+  if (calculationMode === CALCULATION_MODE.VALUE) {
+    const quantityUnits = calculateQuantityUnits(product.value, product.mrp);
+    const valueUnits = parseDecimalUnits(product.value, VALUE_SCALE);
+    const normalizedValue = valueUnits === null ? '' : formatUnits(valueUnits, VALUE_SCALE);
+    return {
+      ...product,
+      calculationMode,
+      quantity: quantityUnits === null ? '' : formatUnits(quantityUnits, QTY_SCALE),
+      calculatedValue: normalizedValue,
+      totalValue: normalizedValue,
+    };
+  }
+
+  const valueUnits = calculateValueUnits(product.mrp, product.quantity);
+  const value = valueUnits === null ? '' : formatUnits(valueUnits, VALUE_SCALE);
+  return {
+    ...product,
+    calculationMode,
+    value,
+    calculatedValue: value,
+    totalValue: value,
+  };
+};
+
+const approvalProductValueUnits = (product) => {
+  const valueUnits = parseDecimalUnits(product.value, VALUE_SCALE);
+  if (valueUnits !== null) return valueUnits;
+  return calculateValueUnits(product.mrp, product.quantity) || 0n;
+};
+
+const approvalProductValue = (product) => unitsToNumber(approvalProductValueUnits(product), VALUE_SCALE);
+
+const approvalProductQuantity = (product) => unitsToNumber(parseDecimalUnits(product.quantity, QTY_SCALE, { blankAsZero: true }), QTY_SCALE);
+
+const approvalProductMrp = (value) => unitsToNumber(parseDecimalUnits(value, MRP_SCALE, { blankAsZero: true }), MRP_SCALE);
 
 const StatusBadge = ({ value, type = 'approval' }) => {
   const palette = type === 'settlement' ? settlementColors : statusColors;
@@ -71,9 +179,36 @@ const emptyApprovalProduct = () => ({
   mrpSnapshot: '',
   masterMrpSnapshot: '',
   quantity: '',
+  value: '',
+  calculatedValue: '',
   totalValue: '',
+  calculationMode: CALCULATION_MODE.QTY,
   status: 'Approved',
 });
+
+const approvalProductForEditing = (product = {}) => {
+  const quantity = formatQuantityInput(product.quantity);
+  const savedValue = formatValueInput(product.value ?? product.calculatedValue ?? product.totalValue ?? '');
+  const fallbackValue = savedValue || formatUnits(calculateValueUnits(product.mrp, quantity) || 0n, VALUE_SCALE);
+  const calculationMode = normalizeCalculationMode(product.calculationMode);
+  const row = {
+    ...emptyApprovalProduct(),
+    ...product,
+    productId: product.productId?._id || product.productId || '',
+    productName: product.productName || product.productNameSnapshot || '',
+    productNameSnapshot: product.productNameSnapshot || product.productName || '',
+    mrp: product.mrp || '',
+    mrpSnapshot: product.mrpSnapshot || product.mrp || '',
+    masterMrpSnapshot: product.masterMrpSnapshot || '',
+    quantity,
+    value: fallbackValue,
+    calculatedValue: fallbackValue,
+    totalValue: fallbackValue,
+    calculationMode,
+    status: product.status || 'Approved',
+  };
+  return recalculateApprovalProduct(row, calculationMode);
+};
 
 const DocumentButtons = ({ label, urls = [] }) => {
   const files = urls.filter(Boolean);
@@ -456,23 +591,64 @@ const ReplacementWorkflowList = () => {
     Object.entries(formData).forEach(([k, v]) => { if (v !== undefined && v !== '') fd.append(k, v); });
     fd.set('approvalType', approvalMode);
     if (approvalMode === 'Product') {
-      const productRows = approvalProducts.map((product) => ({
-        ...product,
-        totalValue: approvalProductValue(product),
-      }));
+      const productRows = approvalProducts.map((product) => {
+        const value = approvalProductValue(product);
+        const mrp = approvalProductMrp(product.mrp);
+        return {
+          productId: product.productId,
+          productName: product.productName,
+          productNameSnapshot: product.productNameSnapshot,
+          sku: product.sku,
+          productCode: product.productCode,
+          mrp,
+          mrpSnapshot: approvalProductMrp(product.mrpSnapshot || product.mrp),
+          masterMrpSnapshot: approvalProductMrp(product.masterMrpSnapshot),
+          quantity: approvalProductQuantity(product),
+          value,
+          calculatedValue: value,
+          totalValue: value,
+          calculationMode: normalizeCalculationMode(product.calculationMode),
+          status: product.status || 'Approved',
+        };
+      });
       fd.set('approvalAmount', String(productRows.reduce((sum, product) => sum + Number(product.totalValue || 0), 0)));
-      fd.append('approvalProducts', JSON.stringify(productRows));
+      fd.set('approvalProducts', JSON.stringify(productRows));
     }
     approvalMutation.mutate({ id: approvalDialog._id, data: fd });
   };
 
-  const updateApprovalProduct = (index, patch) => {
+  const updateApprovalProduct = (index, patch, mode) => {
     setApprovalProducts((rows) => rows.map((row, i) => {
       if (i !== index) return row;
-      const next = { ...row, ...patch };
-      next.totalValue = approvalProductValue(next);
-      return next;
+      const next = typeof patch === 'function' ? patch(row) : { ...row, ...patch };
+      return recalculateApprovalProduct(next, mode || next.calculationMode);
     }));
+  };
+
+  const updateApprovalMrp = (index, value) => {
+    updateApprovalProduct(index, { mrp: value, mrpSnapshot: value });
+  };
+
+  const updateApprovalQuantity = (index, value) => {
+    updateApprovalProduct(index, { quantity: value }, CALCULATION_MODE.QTY);
+  };
+
+  const updateApprovalValue = (index, value) => {
+    updateApprovalProduct(index, { value }, CALCULATION_MODE.VALUE);
+  };
+
+  const finalizeApprovalQuantity = (index) => {
+    updateApprovalProduct(index, (row) => ({
+      ...row,
+      quantity: formatQuantityInput(row.quantity),
+    }), CALCULATION_MODE.QTY);
+  };
+
+  const finalizeApprovalValue = (index) => {
+    updateApprovalProduct(index, (row) => ({
+      ...row,
+      value: formatValueInput(row.value),
+    }), CALCULATION_MODE.VALUE);
   };
 
   const selectApprovalProduct = (index, selectedProduct) => {
@@ -482,7 +658,7 @@ const ReplacementWorkflowList = () => {
 
       const productName = selectedProduct.productName || selectedProduct.name || '';
       const currentMrp = row.mrp !== undefined && row.mrp !== '' ? row.mrp : selectedProduct.mrp || '';
-      return {
+      const nextRow = {
         ...row,
         productId: selectedProduct.productId || selectedProduct._id,
         productName,
@@ -492,9 +668,9 @@ const ReplacementWorkflowList = () => {
         mrp: currentMrp,
         mrpSnapshot: currentMrp,
         masterMrpSnapshot: selectedProduct.mrp || 0,
-        totalValue: approvalProductValue({ ...row, mrp: currentMrp }),
         status: row.status || 'Approved',
       };
+      return recalculateApprovalProduct(nextRow, row.calculationMode);
     }));
   };
 
@@ -514,15 +690,7 @@ const ReplacementWorkflowList = () => {
     setApprovalDialog(rep);
     setApprovalMode(rep.approvalType || 'Amount');
     setApprovalProducts(rep.approvalProducts?.length
-      ? rep.approvalProducts.map((product) => ({
-        ...emptyApprovalProduct(),
-        ...product,
-        productId: product.productId?._id || product.productId || '',
-        productName: product.productName || product.productNameSnapshot || '',
-        productNameSnapshot: product.productNameSnapshot || product.productName || '',
-        totalValue: approvalProductValue(product),
-        status: product.status || 'Approved',
-      }))
+      ? rep.approvalProducts.map(approvalProductForEditing)
       : [emptyApprovalProduct()]);
     resetApproval({
       approvalType: rep.approvalType || 'Amount',
@@ -882,9 +1050,7 @@ const ReplacementWorkflowList = () => {
               {approvalMode === 'Product' && (
                 <Grid item xs={12}>
                   <Typography variant="subtitle2" fontWeight={700} mb={1}>Approved Products</Typography>
-                  {approvalProducts.map((product, index) => {
-                    const total = approvalProductValue(product);
-                    return (
+                  {approvalProducts.map((product, index) => (
                       <Grid container spacing={1} key={index} sx={{ mb: 1, alignItems: 'center' }}>
                         <Grid item xs={12} md={4}>
                           <SearchableProductDropdown
@@ -897,9 +1063,9 @@ const ReplacementWorkflowList = () => {
                             required
                           />
                         </Grid>
-                        <Grid item xs={6} sm={3} md={1.4}><TextField fullWidth size="small" label="MRP" type="number" value={product.mrp} onChange={(e) => updateApprovalProduct(index, { mrp: e.target.value, mrpSnapshot: e.target.value })} /></Grid>
-                        <Grid item xs={6} sm={3} md={1.4}><TextField fullWidth size="small" label="Quantity" type="number" value={product.quantity} onChange={(e) => updateApprovalProduct(index, { quantity: e.target.value })} /></Grid>
-                        <Grid item xs={6} sm={3} md={1.6}><TextField fullWidth size="small" label="Value" type="number" value={total || ''} InputProps={{ readOnly: true }} /></Grid>
+                        <Grid item xs={6} sm={3} md={1.4}><TextField fullWidth size="small" label="MRP" type="number" value={product.mrp} onChange={(e) => updateApprovalMrp(index, e.target.value)} inputProps={{ min: 0, step: '0.01' }} /></Grid>
+                        <Grid item xs={6} sm={3} md={1.4}><TextField fullWidth size="small" label="Quantity" type="number" value={product.quantity} onChange={(e) => updateApprovalQuantity(index, e.target.value)} onBlur={() => finalizeApprovalQuantity(index)} inputProps={{ min: 0, step: '0.0001' }} /></Grid>
+                        <Grid item xs={6} sm={3} md={1.6}><TextField fullWidth size="small" label="Value" type="number" value={product.value} onChange={(e) => updateApprovalValue(index, e.target.value)} onBlur={() => finalizeApprovalValue(index)} inputProps={{ min: 0, step: '0.01' }} /></Grid>
                         <Grid item xs={6} sm={3} md={1.7}>
                           <TextField select fullWidth size="small" label="Status" value={product.status || 'Approved'} onChange={(e) => updateApprovalProduct(index, { status: e.target.value })}>
                             <MenuItem value="Approved">Approved</MenuItem>
@@ -909,8 +1075,7 @@ const ReplacementWorkflowList = () => {
                         </Grid>
                         <Grid item xs={12} md={1.4}><Button fullWidth color="error" onClick={() => setApprovalProducts((rows) => rows.length === 1 ? rows : rows.filter((_, i) => i !== index))}>Remove</Button></Grid>
                       </Grid>
-                    );
-                  })}
+                  ))}
                   <Button size="small" startIcon={<AddIcon />} onClick={() => setApprovalProducts((rows) => [...rows, emptyApprovalProduct()])}>Add Product</Button>
                   <Typography variant="body2" fontWeight={700} mt={1}>Total Product Approval Value: {money(approvalProducts.reduce((sum, product) => sum + approvalProductValue(product), 0))}</Typography>
                 </Grid>

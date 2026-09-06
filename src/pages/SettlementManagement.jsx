@@ -37,6 +37,142 @@ const statusColors = {
 const formatDate = (value) => (value ? format(new Date(value), 'dd/MM/yyyy') : '-');
 const money = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(value || 0));
 
+const CALCULATION_MODE = {
+  QTY: 'QTY',
+  VALUE: 'VALUE',
+};
+
+const MRP_SCALE = 4;
+const QTY_SCALE = 4;
+const VALUE_SCALE = 2;
+
+const pow10 = (scale) => 10n ** BigInt(scale);
+
+const parseDecimalUnits = (value, scale, { blankAsZero = false } = {}) => {
+  if (value === undefined || value === null || value === '') return blankAsZero ? 0n : null;
+  const text = String(value).trim().replace(/,/g, '');
+  if (!text) return blankAsZero ? 0n : null;
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(text)) return null;
+
+  const [wholeRaw = '0', fractionRaw = ''] = text.split('.');
+  const whole = wholeRaw || '0';
+  const fraction = fractionRaw.slice(0, scale).padEnd(scale, '0');
+  const roundDigit = Number(fractionRaw[scale] || 0);
+  let units = BigInt(whole) * pow10(scale) + BigInt(fraction || '0');
+  if (roundDigit >= 5) units += 1n;
+  return units;
+};
+
+const roundDivide = (numerator, denominator) => {
+  if (denominator <= 0n) return null;
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  return quotient + (remainder * 2n >= denominator ? 1n : 0n);
+};
+
+const roundScale = (units, fromScale, toScale) => {
+  if (fromScale === toScale) return units;
+  if (fromScale < toScale) return units * pow10(toScale - fromScale);
+  return roundDivide(units, pow10(fromScale - toScale));
+};
+
+const formatUnits = (units, scale) => {
+  if (units === null || units === undefined) return '';
+  const divisor = pow10(scale);
+  const whole = units / divisor;
+  const fraction = String(units % divisor).padStart(scale, '0');
+  return scale === 0 ? String(whole) : `${whole}.${fraction}`;
+};
+
+const unitsToNumber = (units, scale) => Number(formatUnits(units || 0n, scale));
+
+const roundMoneyNumber = (value) => {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return 0;
+  const units = parseDecimalUnits(Math.abs(number), VALUE_SCALE, { blankAsZero: true });
+  return (number < 0 ? -1 : 1) * unitsToNumber(units, VALUE_SCALE);
+};
+
+const calculateValueUnits = (mrp, quantity) => {
+  const mrpUnits = parseDecimalUnits(mrp, MRP_SCALE, { blankAsZero: true });
+  const quantityUnits = parseDecimalUnits(quantity, QTY_SCALE);
+  if (mrpUnits === null || quantityUnits === null) return null;
+  return roundScale(mrpUnits * quantityUnits, MRP_SCALE + QTY_SCALE, VALUE_SCALE);
+};
+
+const calculateQuantityUnits = (value, mrp) => {
+  const valueUnits = parseDecimalUnits(value, VALUE_SCALE);
+  const mrpUnits = parseDecimalUnits(mrp, MRP_SCALE, { blankAsZero: true });
+  if (valueUnits === null || mrpUnits === null || mrpUnits <= 0n) return null;
+  return roundDivide(valueUnits * pow10(MRP_SCALE + QTY_SCALE - VALUE_SCALE), mrpUnits);
+};
+
+const formatQuantityInput = (value) => {
+  const units = parseDecimalUnits(value, QTY_SCALE);
+  return units === null ? '' : formatUnits(units, QTY_SCALE);
+};
+
+const formatValueInput = (value) => {
+  const units = parseDecimalUnits(value, VALUE_SCALE);
+  return units === null ? '' : formatUnits(units, VALUE_SCALE);
+};
+
+const normalizeCalculationMode = (mode) => (mode === CALCULATION_MODE.VALUE ? CALCULATION_MODE.VALUE : CALCULATION_MODE.QTY);
+
+const recalculateProduct = (product, mode = product.calculationMode) => {
+  const calculationMode = normalizeCalculationMode(mode);
+  if (calculationMode === CALCULATION_MODE.VALUE) {
+    const quantityUnits = calculateQuantityUnits(product.value, product.mrp);
+    return {
+      ...product,
+      calculationMode,
+      quantity: quantityUnits === null ? '' : formatUnits(quantityUnits, QTY_SCALE),
+    };
+  }
+
+  const valueUnits = calculateValueUnits(product.mrp, product.quantity);
+  return {
+    ...product,
+    calculationMode,
+    value: valueUnits === null ? '' : formatUnits(valueUnits, VALUE_SCALE),
+  };
+};
+
+const productValueUnits = (product) => {
+  const valueUnits = parseDecimalUnits(product.value, VALUE_SCALE);
+  if (valueUnits !== null) return valueUnits;
+  return calculateValueUnits(product.mrp, product.quantity) || 0n;
+};
+
+const productValue = (product) => unitsToNumber(productValueUnits(product), VALUE_SCALE);
+
+const productQuantity = (product) => unitsToNumber(parseDecimalUnits(product.quantity, QTY_SCALE, { blankAsZero: true }), QTY_SCALE);
+
+const productMrp = (value) => unitsToNumber(parseDecimalUnits(value, MRP_SCALE, { blankAsZero: true }), MRP_SCALE);
+
+const settlementProductForEditing = (product = {}) => {
+  const quantity = formatQuantityInput(product.quantity);
+  const value = formatValueInput(product.value ?? product.calculatedValue ?? '');
+  const calculationMode = normalizeCalculationMode(product.calculationMode);
+  const row = {
+    productId: product.productId || '',
+    productName: product.productName || '',
+    productNameSnapshot: product.productNameSnapshot || product.productName || '',
+    sku: product.sku || '',
+    productCode: product.productCode || '',
+    mrp: product.mrp || '',
+    mrpSnapshot: product.mrpSnapshot || product.mrp || '',
+    masterMrpSnapshot: product.masterMrpSnapshot || '',
+    quantity,
+    unit: product.unit || 'pcs',
+    value: value || formatUnits(calculateValueUnits(product.mrp, quantity) || 0n, VALUE_SCALE),
+    calculatedValue: value || formatUnits(calculateValueUnits(product.mrp, quantity) || 0n, VALUE_SCALE),
+    remarks: product.remarks || '',
+    calculationMode,
+  };
+  return recalculateProduct(row, calculationMode);
+};
+
 const emptyProduct = () => ({
   productId: '',
   productName: '',
@@ -48,10 +184,11 @@ const emptyProduct = () => ({
   masterMrpSnapshot: '',
   quantity: '',
   unit: 'pcs',
+  value: '',
+  calculatedValue: '',
   remarks: '',
+  calculationMode: CALCULATION_MODE.QTY,
 });
-
-const productValue = (product) => Number(product.mrp || 0) * Number(product.quantity || 0);
 
 const StatusChip = ({ status }) => (
   <Chip
@@ -141,19 +278,7 @@ const SettlementManagement = () => {
       setFormDialog(full);
       setLastSaleInvoiceNo(full.lastSaleInvoiceNo || '');
       setRemarks(full.remarks || '');
-      setSentProducts(full.sentProducts?.length ? full.sentProducts.map((product) => ({
-        productId: product.productId || '',
-        productName: product.productName || '',
-        productNameSnapshot: product.productNameSnapshot || product.productName || '',
-        sku: product.sku || '',
-        productCode: product.productCode || '',
-        mrp: product.mrp || '',
-        mrpSnapshot: product.mrpSnapshot || product.mrp || '',
-        masterMrpSnapshot: product.masterMrpSnapshot || '',
-        quantity: product.quantity || '',
-        unit: product.unit || 'pcs',
-        remarks: product.remarks || '',
-      })) : [emptyProduct()]);
+      setSentProducts(full.sentProducts?.length ? full.sentProducts.map(settlementProductForEditing) : [emptyProduct()]);
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to open settlement');
     }
@@ -194,12 +319,34 @@ const SettlementManagement = () => {
     lastSaleInvoiceNo,
     remarks,
     sentProducts: sentProducts
-      .map((product) => ({ ...product, calculatedValue: productValue(product), value: productValue(product) }))
-      .filter((product) => product.productName || product.mrp || product.quantity),
+      .map((product) => {
+        const value = productValue(product);
+        const mrp = productMrp(product.mrp);
+        return {
+          productId: product.productId,
+          productName: product.productName,
+          productNameSnapshot: product.productNameSnapshot,
+          sku: product.sku,
+          productCode: product.productCode,
+          mrp,
+          mrpSnapshot: productMrp(product.mrpSnapshot || product.mrp),
+          masterMrpSnapshot: productMrp(product.masterMrpSnapshot),
+          quantity: productQuantity(product),
+          unit: product.unit || 'pcs',
+          value,
+          calculatedValue: value,
+          remarks: product.remarks || '',
+          calculationMode: normalizeCalculationMode(product.calculationMode),
+        };
+      })
+      .filter((product) => product.productName || product.mrp || product.quantity || product.value),
   }), [lastSaleInvoiceNo, remarks, sentProducts]);
 
-  const sentTotal = payload.sentProducts.reduce((sum, product) => sum + Number(product.value || 0), 0);
-  const difference = sentTotal - Number(formDialog?.approvedValue || 0);
+  const sentTotal = unitsToNumber(payload.sentProducts.reduce((sum, product) => {
+    const units = parseDecimalUnits(product.value, VALUE_SCALE, { blankAsZero: true });
+    return sum + (units || 0n);
+  }, 0n), VALUE_SCALE);
+  const difference = roundMoneyNumber(sentTotal - Number(formDialog?.approvedValue || 0));
   const computedStatus = payload.sentProducts.length === 0 ? 'PENDING' : difference === 0 ? 'MATCHED' : sentTotal < Number(formDialog?.approvedValue || 0) ? 'PARTIAL' : 'ON_HOLD';
 
   const saveSettlement = () => {
@@ -214,6 +361,40 @@ const SettlementManagement = () => {
 
   const addProduct = () => setSentProducts((rows) => [...rows, emptyProduct()]);
   const updateProduct = (index, key, value) => setSentProducts((rows) => rows.map((row, i) => (i === index ? { ...row, [key]: value } : row)));
+  const updateCalculatedProduct = (index, updater, mode) => {
+    setSentProducts((rows) => rows.map((row, i) => {
+      if (i !== index) return row;
+      const nextRow = typeof updater === 'function' ? updater(row) : { ...row, ...updater };
+      return recalculateProduct(nextRow, mode || nextRow.calculationMode);
+    }));
+  };
+
+  const updateMrp = (index, value) => {
+    updateCalculatedProduct(index, (row) => ({ ...row, mrp: value, mrpSnapshot: value }));
+  };
+
+  const updateQuantity = (index, value) => {
+    updateCalculatedProduct(index, { quantity: value }, CALCULATION_MODE.QTY);
+  };
+
+  const updateValue = (index, value) => {
+    updateCalculatedProduct(index, { value }, CALCULATION_MODE.VALUE);
+  };
+
+  const finalizeQuantity = (index) => {
+    updateCalculatedProduct(index, (row) => ({
+      ...row,
+      quantity: formatQuantityInput(row.quantity),
+    }), CALCULATION_MODE.QTY);
+  };
+
+  const finalizeValue = (index) => {
+    updateCalculatedProduct(index, (row) => ({
+      ...row,
+      value: formatValueInput(row.value),
+    }), CALCULATION_MODE.VALUE);
+  };
+
   const selectProduct = (index, selectedProduct) => {
     setSentProducts((rows) => rows.map((row, i) => {
       if (i !== index) return row;
@@ -221,7 +402,7 @@ const SettlementManagement = () => {
 
       const productName = selectedProduct.productName || selectedProduct.name || '';
       const currentMrp = row.mrp !== undefined && row.mrp !== '' ? row.mrp : selectedProduct.mrp || '';
-      return {
+      const nextRow = {
         ...row,
         productId: selectedProduct.productId || selectedProduct._id,
         productName,
@@ -232,6 +413,7 @@ const SettlementManagement = () => {
         mrpSnapshot: currentMrp,
         masterMrpSnapshot: selectedProduct.mrp || 0,
       };
+      return recalculateProduct(nextRow, row.calculationMode);
     }));
   };
   const removeProduct = (index) => setSentProducts((rows) => (rows.length === 1 ? rows : rows.filter((_, i) => i !== index)));
@@ -439,11 +621,11 @@ const SettlementManagement = () => {
                             required
                           />
                         </TableCell>
-                        <TableCell><TextField size="small" type="number" value={product.mrp} onChange={(e) => setSentProducts((rows) => rows.map((row, i) => (i === index ? { ...row, mrp: e.target.value, mrpSnapshot: e.target.value } : row)))} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
-                        <TableCell><TextField size="small" type="number" value={product.quantity} onChange={(e) => updateProduct(index, 'quantity', e.target.value)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
+                        <TableCell><TextField size="small" type="number" value={product.mrp} onChange={(e) => updateMrp(index, e.target.value)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
+                        <TableCell><TextField size="small" type="number" value={product.quantity} onChange={(e) => updateQuantity(index, e.target.value)} onBlur={() => finalizeQuantity(index)} inputProps={{ min: 0, step: '0.0001' }} /></TableCell>
                         <TableCell><TextField size="small" value={product.unit || 'pcs'} onChange={(e) => updateProduct(index, 'unit', e.target.value)} /></TableCell>
                         <TableCell><TextField size="small" value={product.remarks || ''} onChange={(e) => updateProduct(index, 'remarks', e.target.value)} placeholder="Optional" /></TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 800 }}>{money(productValue(product))}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 800 }}><TextField size="small" type="number" value={product.value} onChange={(e) => updateValue(index, e.target.value)} onBlur={() => finalizeValue(index)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
                         <TableCell align="center"><IconButton size="small" color="error" onClick={() => removeProduct(index)}><RemoveIcon fontSize="small" /></IconButton></TableCell>
                       </TableRow>
                     ))}
