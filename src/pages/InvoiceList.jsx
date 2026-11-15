@@ -288,10 +288,23 @@ const InvoiceList = () => {
     }, 400);
   };
 
+  const cartonKey = (replacement) => {
+    const carton = replacement.cartonId || replacement.masterCartonId;
+    if (!carton) return '';
+    return String(typeof carton === 'object' ? carton._id : carton);
+  };
+
   const toggleReplacement = (rep) => {
     setSelectedReplacements((prev) => {
-      const exists = prev.some((r) => r._id === rep._id);
-      const next = exists ? prev.filter((r) => r._id !== rep._id) : [...prev, rep];
+      const mergedCartonKey = cartonKey(rep);
+      const group = mergedCartonKey
+        ? availableReplacements.filter((replacement) => cartonKey(replacement) === mergedCartonKey)
+        : [rep];
+      const groupIds = new Set(group.map((replacement) => replacement._id));
+      const isFullySelected = group.every((replacement) => prev.some((selected) => selected._id === replacement._id));
+      const next = isFullySelected
+        ? prev.filter((selected) => !groupIds.has(selected._id))
+        : [...prev.filter((selected) => !groupIds.has(selected._id)), ...group];
       // Selection order must stay the same as the replacement list. That keeps
       // persisted merge members together without moving parties for PDF output.
       return next.sort((left, right) => availableReplacements.findIndex((item) => item._id === left._id)
