@@ -12,13 +12,10 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControlLabel,
   Grid,
   IconButton,
   InputAdornment,
   MenuItem,
-  Radio,
-  RadioGroup,
   Table,
   TableBody,
   TableCell,
@@ -75,7 +72,6 @@ const InvoiceList = () => {
   const [selectedTransport, setSelectedTransport] = useState('');
   const [lrNo, setLrNo] = useState('');
   const [dispatchDate, setDispatchDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [packingMode, setPackingMode] = useState('merge');
   const [invoiceDate, setInvoiceDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [remarks, setRemarks] = useState('');
 
@@ -147,7 +143,6 @@ const InvoiceList = () => {
     setSelectedTransport('');
     setLrNo('');
     setDispatchDate(format(new Date(), 'yyyy-MM-dd'));
-    setPackingMode('merge');
     setInvoiceDate(format(new Date(), 'yyyy-MM-dd'));
     setRemarks('');
   };
@@ -296,7 +291,11 @@ const InvoiceList = () => {
   const toggleReplacement = (rep) => {
     setSelectedReplacements((prev) => {
       const exists = prev.some((r) => r._id === rep._id);
-      return exists ? prev.filter((r) => r._id !== rep._id) : [...prev, rep];
+      const next = exists ? prev.filter((r) => r._id !== rep._id) : [...prev, rep];
+      // Selection order must stay the same as the replacement list. That keeps
+      // persisted merge members together without moving parties for PDF output.
+      return next.sort((left, right) => availableReplacements.findIndex((item) => item._id === left._id)
+        - availableReplacements.findIndex((item) => item._id === right._id));
     });
   };
 
@@ -324,7 +323,6 @@ const InvoiceList = () => {
       transport: selectedTransport || undefined,
       lrNo,
       dispatchDate,
-      packingMode,
     });
   };
 
@@ -556,16 +554,9 @@ const InvoiceList = () => {
               <TextField fullWidth label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} size="small" />
             </Grid>
             <Grid item xs={12}>
-              <Typography variant="subtitle2" fontWeight={600} mb={0.5}>Packing Mode</Typography>
-              <RadioGroup row value={packingMode} onChange={(e) => setPackingMode(e.target.value)}>
-                <FormControlLabel value="individual" control={<Radio size="small" />} label="Individual" />
-                <FormControlLabel value="merge" control={<Radio size="small" />} label="Merge Packing" />
-              </RadioGroup>
-              <Typography variant="caption" color="text.secondary">
-                {packingMode === 'merge'
-                  ? 'Unpacked selected items will be packed into one physical carton. Existing merged groups stay merged.'
-                  : 'Unpacked selected items get individual physical cartons.'}
-              </Typography>
+              <Alert severity="info" sx={{ borderRadius: 2 }}>
+                Carton counts are automatic: saved carton merges print as one physical carton; all other rows retain their received case quantity.
+              </Alert>
             </Grid>
           </Grid>
         </DialogContent>

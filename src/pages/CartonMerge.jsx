@@ -13,11 +13,15 @@ import {
 import { masterCartonService, replacementService } from '../services/replacement.service';
 import { companyService } from '../services/company.service';
 import SearchableDropdown from '../components/SearchableDropdown';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 
 const CartonMerge = () => {
   const queryClient = useQueryClient();
+  const { hasRole } = useAuth();
+  const canMerge = hasRole('super_admin', 'admin', 'operator');
+  const canSeal = hasRole('super_admin', 'admin');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [createDialog, setCreateDialog] = useState(false);
@@ -41,7 +45,7 @@ const CartonMerge = () => {
   const { data: replacementsData, isLoading: repLoading } = useQuery({
     queryKey: ['replacements-unmerged', selectedCompany],
     queryFn: () => replacementService.getReplacements({
-      company: selectedCompany, limit: 100,
+      company: selectedCompany, limit: 100, mergeEligible: true,
     }),
     enabled: !!selectedCompany,
   });
@@ -49,19 +53,27 @@ const CartonMerge = () => {
   const cartons = cartonsData?.data || [];
   const pagination = cartonsData?.pagination || { total: 0 };
   const companies = companiesData?.data || [];
-  const availableReplacements = (replacementsData?.data || []).filter(r => !r.masterCartonId && !r.cartonId && (!r.cartonStatus || r.cartonStatus === 'AVAILABLE'));
+  const availableReplacements = (replacementsData?.data || []).filter(r =>
+    r.status === 'active' && !r.invoiceId && !r.masterCartonId && !r.cartonId &&
+    !r.cartonMergedAt && !r.cartonMergedBy && (!r.cartonStatus || r.cartonStatus === 'AVAILABLE') &&
+    Number.isSafeInteger(r.receivingCases) && r.receivingCases > 0);
 
   const createMutation = useMutation({
     mutationFn: masterCartonService.createMasterCarton,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['master-cartons'] });
       queryClient.invalidateQueries({ queryKey: ['replacements'] });
+      queryClient.invalidateQueries({ queryKey: ['replacements-unmerged'] });
       toast.success('Master carton created!');
       setCreateDialog(false);
       setSelectedReplacements([]);
       setSelectedCompany('');
     },
-    onError: (err) => toast.error(err.response?.data?.message || 'Failed'),
+    onError: (err) => {
+      queryClient.invalidateQueries({ queryKey: ['replacements-unmerged'] });
+      setSelectedReplacements([]);
+      toast.error(err.response?.data?.message || 'Failed to merge cartons');
+    },
   });
 
   const sealMutation = useMutation({
@@ -82,16 +94,15 @@ const CartonMerge = () => {
   };
 
   const handleCreateCarton = () => {
-    if (selectedReplacements.length === 0) {
-      toast.error('Select at least one replacement');
+    if (selectedReplacements.length < 2) {
+      toast.error('Select at least two replacement rows to merge');
       return;
     }
-    const entries = selectedReplacements.map(r => ({
-      party: r.party._id || r.party,
-      partyName: r.party?.name || '',
-      cases: r.receivingCases || 0,
-      replacementId: r._id,
-    }));
+    if (selectedReplacements.some((row) => !availableReplacements.some((available) => available._id === row._id))) {
+      toast.error('Some selected cartons are no longer available. Refresh your selection.');
+      return;
+    }
+    const entries = selectedReplacements.map(r => ({ replacementId: r._id }));
     createMutation.mutate({ company: selectedCompany, entries });
     setConfirmDialog(false);
   };
@@ -107,7 +118,7 @@ const CartonMerge = () => {
           <Typography variant="h4" fontWeight={700} color="#0D1B2A">Carton Merge</Typography>
           <Typography variant="body2" color="#8A9AAA" mt={0.5}>Merge multiple party replacements into master cartons</Typography>
         </Box>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialog(true)}>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialog(true)} disabled={!canMerge}>
           New Master Carton
         </Button>
       </Box>
@@ -157,7 +168,7 @@ const CartonMerge = () => {
                     </TableCell>
                     <TableCell align="center">
                       <Button size="small" variant="text" onClick={() => setViewCarton(c)}>View</Button>
-                      {c.status === 'Open' && (
+                      {c.status === 'Open' && canSeal && (
                         <Button size="small" variant="text" color="warning"
                           onClick={() => sealMutation.mutate(c._id)}
                           disabled={sealMutation.isPending}>
@@ -249,7 +260,7 @@ const CartonMerge = () => {
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => { setCreateDialog(false); setSelectedReplacements([]); }} variant="outlined">Cancel</Button>
           <Button variant="contained" onClick={() => setConfirmDialog(true)}
-            disabled={selectedReplacements.length === 0 || createMutation.isPending}>
+            disabled={!canMerge || selectedReplacements.length < 2 || createMutation.isPending}>
             {createMutation.isPending ? <CircularProgress size={20} /> : `Create Carton (${totalSelectedCases} Cases)`}
           </Button>
         </DialogActions>
@@ -283,7 +294,7 @@ const CartonMerge = () => {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setConfirmDialog(false)} variant="outlined">Back</Button>
-          <Button variant="contained" onClick={handleCreateCarton} disabled={createMutation.isPending}>
+          <Button variant="contained" onClick={handleCreateCarton} disabled={!canMerge || selectedReplacements.length < 2 || createMutation.isPending}>
             {createMutation.isPending ? <CircularProgress size={20} /> : 'Confirm Merge'}
           </Button>
         </DialogActions>
