@@ -294,6 +294,24 @@ const InvoiceList = () => {
     return String(typeof carton === 'object' ? carton._id : carton);
   };
 
+  const cartonLabel = (replacement) => {
+    const carton = [replacement.masterCartonId, replacement.cartonId]
+      .find((value) => value && typeof value === 'object');
+    return carton?.cartonNumber || cartonKey(replacement);
+  };
+
+  const mergedSelectionSummaries = [...selectedReplacements.reduce((summaries, replacement) => {
+    const key = cartonKey(replacement);
+    const groupSize = key
+      ? availableReplacements.filter((available) => cartonKey(available) === key).length
+      : 0;
+    if (!key || groupSize < 2) return summaries;
+    const summary = summaries.get(key) || { key, label: cartonLabel(replacement), count: 0 };
+    summary.count += 1;
+    summaries.set(key, summary);
+    return summaries;
+  }, new Map()).values()];
+
   const toggleReplacement = (rep) => {
     setSelectedReplacements((prev) => {
       const mergedCartonKey = cartonKey(rep);
@@ -468,6 +486,12 @@ const InvoiceList = () => {
                   <strong>{selectedReplacements.length}</strong> selected • <strong>{totalSelectedCases}</strong> total cases
                 </Alert>
               )}
+
+              {mergedSelectionSummaries.map((group) => (
+                <Alert key={group.key} severity="info" sx={{ mb: 2, borderRadius: 2 }}>
+                  <strong>{group.count}</strong> replacements included — Merged Carton <strong>{group.label}</strong>
+                </Alert>
+              ))}
 
               {replacementsLoading ? (
                 <Box sx={{ textAlign: 'center', py: 4 }}><CircularProgress size={32} /></Box>
