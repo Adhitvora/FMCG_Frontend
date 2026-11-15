@@ -43,6 +43,18 @@ export const productService = {
     window.URL.revokeObjectURL(url);
   },
 
+  exportProducts: async (params = {}) => {
+    const response = await api.get('/products/export-excel', { params, responseType: 'blob' });
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'product_export.xlsx');
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
+
   previewImport: async (file, companyId) => {
     const formData = new FormData();
     formData.append('file', file);

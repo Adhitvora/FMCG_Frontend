@@ -150,6 +150,19 @@ const productQuantity = (product) => unitsToNumber(parseDecimalUnits(product.qua
 
 const productMrp = (value) => unitsToNumber(parseDecimalUnits(value, MRP_SCALE, { blankAsZero: true }), MRP_SCALE);
 
+const calculateTotalWeightKgUnits = (product = {}) => {
+  const weightUnits = parseDecimalUnits(product.perPieceWeightGram, QTY_SCALE);
+  const quantityUnits = parseDecimalUnits(product.quantity, QTY_SCALE);
+  if (weightUnits === null || quantityUnits === null) return null;
+  // gram(4dp) × quantity(4dp), converted to kilograms and displayed at 4dp.
+  return roundDivide(weightUnits * quantityUnits, pow10(7));
+};
+
+const formatTotalWeightKg = (product) => {
+  const units = calculateTotalWeightKgUnits(product);
+  return units === null ? '-' : `${formatUnits(units, QTY_SCALE)} KG`;
+};
+
 const settlementProductForEditing = (product = {}) => {
   const quantity = formatQuantityInput(product.quantity);
   const value = formatValueInput(product.value ?? product.calculatedValue ?? '');
@@ -163,6 +176,10 @@ const settlementProductForEditing = (product = {}) => {
     mrp: product.mrp || '',
     mrpSnapshot: product.mrpSnapshot || product.mrp || '',
     masterMrpSnapshot: product.masterMrpSnapshot || '',
+    perPieceWeightGram: product.perPieceWeightGram ?? '',
+    masterPerPieceWeightGramSnapshot: product.masterPerPieceWeightGramSnapshot ?? '',
+    // Saved rows are historical snapshots and must never be reset by a later master edit.
+    weightWasEdited: true,
     quantity,
     unit: product.unit || 'pcs',
     value: value || formatUnits(calculateValueUnits(product.mrp, quantity) || 0n, VALUE_SCALE),
@@ -182,6 +199,9 @@ const emptyProduct = () => ({
   mrp: '',
   mrpSnapshot: '',
   masterMrpSnapshot: '',
+  perPieceWeightGram: '',
+  masterPerPieceWeightGramSnapshot: '',
+  weightWasEdited: false,
   quantity: '',
   unit: 'pcs',
   value: '',
@@ -331,6 +351,14 @@ const SettlementManagement = () => {
           mrp,
           mrpSnapshot: productMrp(product.mrpSnapshot || product.mrp),
           masterMrpSnapshot: productMrp(product.masterMrpSnapshot),
+          // Keep raw transaction input here so server-side numeric validation can reject
+          // negative or malformed values instead of silently treating them as blank.
+          perPieceWeightGram: product.perPieceWeightGram === '' || product.perPieceWeightGram === undefined || product.perPieceWeightGram === null
+            ? null
+            : product.perPieceWeightGram,
+          masterPerPieceWeightGramSnapshot: product.masterPerPieceWeightGramSnapshot === '' || product.masterPerPieceWeightGramSnapshot === undefined || product.masterPerPieceWeightGramSnapshot === null
+            ? null
+            : product.masterPerPieceWeightGramSnapshot,
           quantity: productQuantity(product),
           unit: product.unit || 'pcs',
           value,
@@ -346,6 +374,9 @@ const SettlementManagement = () => {
     const units = parseDecimalUnits(product.value, VALUE_SCALE, { blankAsZero: true });
     return sum + (units || 0n);
   }, 0n), VALUE_SCALE);
+  const sentTotalWeightKg = formatUnits(payload.sentProducts.reduce((sum, product) => (
+    sum + (calculateTotalWeightKgUnits(product) || 0n)
+  ), 0n), QTY_SCALE);
   const difference = roundMoneyNumber(sentTotal - Number(formDialog?.approvedValue || 0));
   const computedStatus = payload.sentProducts.length === 0 ? 'PENDING' : difference === 0 ? 'MATCHED' : sentTotal < Number(formDialog?.approvedValue || 0) ? 'PARTIAL' : 'ON_HOLD';
 
@@ -371,6 +402,11 @@ const SettlementManagement = () => {
 
   const updateMrp = (index, value) => {
     updateCalculatedProduct(index, (row) => ({ ...row, mrp: value, mrpSnapshot: value }));
+  };
+
+  const updateWeight = (index, value) => {
+    updateProduct(index, 'perPieceWeightGram', value);
+    updateProduct(index, 'weightWasEdited', true);
   };
 
   const updateQuantity = (index, value) => {
@@ -401,7 +437,8 @@ const SettlementManagement = () => {
       if (!selectedProduct) return { ...row, productId: '', productName: '', productNameSnapshot: '', sku: '', productCode: '' };
 
       const productName = selectedProduct.productName || selectedProduct.name || '';
-      const currentMrp = row.mrp !== undefined && row.mrp !== '' ? row.mrp : selectedProduct.mrp || '';
+      const defaultWeight = selectedProduct.perPieceWeightGram ?? '';
+      const currentWeight = row.perPieceWeightGram ?? '';
       const nextRow = {
         ...row,
         productId: selectedProduct.productId || selectedProduct._id,
@@ -409,9 +446,13 @@ const SettlementManagement = () => {
         productNameSnapshot: productName,
         sku: selectedProduct.sku || '',
         productCode: selectedProduct.productCode || selectedProduct.code || '',
-        mrp: currentMrp,
-        mrpSnapshot: currentMrp,
+        // A fresh selection always uses the current Product Master MRP.
+        mrp: selectedProduct.mrp ?? '',
+        mrpSnapshot: selectedProduct.mrp ?? '',
         masterMrpSnapshot: selectedProduct.mrp || 0,
+        // A transaction override wins; otherwise take the product-master default.
+        perPieceWeightGram: row.weightWasEdited ? currentWeight : defaultWeight,
+        masterPerPieceWeightGramSnapshot: defaultWeight,
       };
       return recalculateProduct(nextRow, row.calculationMode);
     }));
@@ -602,6 +643,8 @@ const SettlementManagement = () => {
                       <TableCell sx={{ minWidth: 220 }}>Product Name</TableCell>
                       <TableCell align="right">MRP</TableCell>
                       <TableCell align="right">Quantity</TableCell>
+                      <TableCell align="right">Per Piece Weight (Gram)</TableCell>
+                      <TableCell align="right">Total Weight (KG)</TableCell>
                       <TableCell>Unit</TableCell>
                       <TableCell>Remarks</TableCell>
                       <TableCell align="right">Value</TableCell>
@@ -623,6 +666,8 @@ const SettlementManagement = () => {
                         </TableCell>
                         <TableCell><TextField size="small" type="number" value={product.mrp} onChange={(e) => updateMrp(index, e.target.value)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
                         <TableCell><TextField size="small" type="number" value={product.quantity} onChange={(e) => updateQuantity(index, e.target.value)} onBlur={() => finalizeQuantity(index)} inputProps={{ min: 0, step: '0.0001' }} /></TableCell>
+                        <TableCell><TextField size="small" type="number" value={product.perPieceWeightGram} onChange={(e) => updateWeight(index, e.target.value)} inputProps={{ min: 0, step: '0.0001' }} placeholder="Optional" /></TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 800, whiteSpace: 'nowrap' }}>{formatTotalWeightKg(product)}</TableCell>
                         <TableCell><TextField size="small" value={product.unit || 'pcs'} onChange={(e) => updateProduct(index, 'unit', e.target.value)} /></TableCell>
                         <TableCell><TextField size="small" value={product.remarks || ''} onChange={(e) => updateProduct(index, 'remarks', e.target.value)} placeholder="Optional" /></TableCell>
                         <TableCell align="right" sx={{ fontWeight: 800 }}><TextField size="small" type="number" value={product.value} onChange={(e) => updateValue(index, e.target.value)} onBlur={() => finalizeValue(index)} inputProps={{ min: 0, step: '0.01' }} /></TableCell>
@@ -637,6 +682,7 @@ const SettlementManagement = () => {
               <Grid container spacing={2} sx={{ mt: 1 }}>
                 <Grid item xs={6} md={3}><Card sx={{ p: 1.5 }}><InfoItem label="Approved Value" value={money(formDialog.approvedValue)} /></Card></Grid>
                 <Grid item xs={6} md={3}><Card sx={{ p: 1.5 }}><InfoItem label="Total Sent Value" value={money(sentTotal)} /></Card></Grid>
+                <Grid item xs={6} md={3}><Card sx={{ p: 1.5 }}><InfoItem label="Total Weight" value={`${sentTotalWeightKg} KG`} /></Card></Grid>
                 <Grid item xs={6} md={3}><Card sx={{ p: 1.5 }}><InfoItem label="Difference" value={money(difference)} /></Card></Grid>
                 <Grid item xs={6} md={3}><Card sx={{ p: 1.5 }}><Typography variant="caption" color="#6B7280" fontWeight={700}>Computed Status</Typography><Box mt={0.5}><StatusChip status={computedStatus} /></Box></Card></Grid>
               </Grid>
@@ -740,11 +786,11 @@ const SettlementManagement = () => {
                   <Grid item xs={12} md={8}>
                     <Typography variant="caption" color="#6B7280" fontWeight={800}>SENT</Typography>
                     <Table size="small">
-                      <TableHead><TableRow><TableCell>Product</TableCell><TableCell align="right">MRP</TableCell><TableCell align="right">Qty</TableCell><TableCell align="right">Value</TableCell></TableRow></TableHead>
+                      <TableHead><TableRow><TableCell>Product</TableCell><TableCell align="right">MRP</TableCell><TableCell align="right">Qty</TableCell><TableCell align="right">Per Piece Weight (Gram)</TableCell><TableCell align="right">Total Weight (KG)</TableCell><TableCell align="right">Value</TableCell></TableRow></TableHead>
                       <TableBody>
                         {detailDialog.sentProducts?.length ? detailDialog.sentProducts.map((product) => (
-                          <TableRow key={product._id || product.productName}><TableCell>{product.productName}</TableCell><TableCell align="right">{money(product.mrp)}</TableCell><TableCell align="right">{product.quantity} {product.unit}</TableCell><TableCell align="right">{money(product.value || product.calculatedValue)}</TableCell></TableRow>
-                        )) : <TableRow><TableCell colSpan={4}>No sent product entries yet.</TableCell></TableRow>}
+                          <TableRow key={product._id || product.productName}><TableCell>{product.productName}</TableCell><TableCell align="right">{money(product.mrp)}</TableCell><TableCell align="right">{product.quantity} {product.unit}</TableCell><TableCell align="right">{product.perPieceWeightGram ?? '-'}</TableCell><TableCell align="right">{formatTotalWeightKg(product)}</TableCell><TableCell align="right">{money(product.value || product.calculatedValue)}</TableCell></TableRow>
+                        )) : <TableRow><TableCell colSpan={6}>No sent product entries yet.</TableCell></TableRow>}
                       </TableBody>
                     </Table>
                     <Divider sx={{ my: 1.5 }} />

@@ -13,6 +13,7 @@ import {
   Edit as EditIcon,
   FileUpload as ImportIcon,
   Search as SearchIcon,
+  Visibility as ViewIcon,
 } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import { productService } from '../services/product.service';
@@ -26,6 +27,7 @@ const emptyForm = () => ({
   productCode: '',
   sku: '',
   mrp: '',
+  perPieceWeightGram: '',
   companyId: '',
   status: 'active',
 });
@@ -45,6 +47,7 @@ const ProductMaster = () => {
   const [importCompanyId, setImportCompanyId] = useState('');
   const [importPreview, setImportPreview] = useState(null);
   const [deleteDialog, setDeleteDialog] = useState(null);
+  const [detailDialog, setDetailDialog] = useState(null);
   const searchTimer = useRef(null);
 
   const handleSearchChange = (e) => {
@@ -157,6 +160,7 @@ const ProductMaster = () => {
       productCode: product.productCode || product.code || '',
       sku: product.sku || '',
       mrp: product.mrp || '',
+      perPieceWeightGram: product.perPieceWeightGram ?? '',
       companyId: product.companyId?._id || product.companyId || '',
       status: product.status || 'active',
     });
@@ -165,11 +169,18 @@ const ProductMaster = () => {
 
   const handleSave = () => {
     if (!form.name.trim()) { toast.error('Product name is required'); return; }
+    if (form.mrp !== '' && (!Number.isFinite(Number(form.mrp)) || Number(form.mrp) < 0)) {
+      toast.error('MRP must be a valid non-negative number'); return;
+    }
+    if (form.perPieceWeightGram !== '' && (!Number.isFinite(Number(form.perPieceWeightGram)) || Number(form.perPieceWeightGram) < 0)) {
+      toast.error('Per Piece Weight (Gram) must be a valid non-negative number'); return;
+    }
     const payload = {
       name: form.name.trim(),
       productCode: form.productCode.trim(),
       sku: form.sku.trim(),
       mrp: form.mrp !== '' ? Number(form.mrp) : 0,
+      perPieceWeightGram: form.perPieceWeightGram !== '' ? Number(form.perPieceWeightGram) : null,
       companyId: form.companyId || null,
       status: form.status,
     };
@@ -263,6 +274,9 @@ const ProductMaster = () => {
           <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => productService.downloadSampleExcel()} size="small">
             Sample Excel
           </Button>
+          <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => productService.exportProducts({ search: searchDebounce, ...(filterCompanyId && { companyId: filterCompanyId }) })} size="small">
+            Export Excel
+          </Button>
           <Button variant="outlined" startIcon={<ImportIcon />} onClick={() => setImportDialog(true)} size="small" color="secondary">
             Bulk Import
           </Button>
@@ -311,6 +325,7 @@ const ProductMaster = () => {
                 <TableCell sx={{ fontWeight: 700 }}>Product Code</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>SKU</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="right">MRP</TableCell>
+                <TableCell sx={{ fontWeight: 700 }} align="right">Per Piece Weight (Gram)</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="center">Actions</TableCell>
@@ -318,9 +333,9 @@ const ProductMaster = () => {
             </TableHead>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={8} align="center" sx={{ py: 6 }}><CircularProgress size={30} /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} align="center" sx={{ py: 6 }}><CircularProgress size={30} /></TableCell></TableRow>
               ) : products.length === 0 ? (
-                <TableRow><TableCell colSpan={8} align="center" sx={{ py: 6, color: '#6B7280' }}>No products found. Use Add Product or import via Excel.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} align="center" sx={{ py: 6, color: '#6B7280' }}>No products found. Use Add Product or import via Excel.</TableCell></TableRow>
               ) : (
                 products.map((product, idx) => (
                   <TableRow key={product._id} hover>
@@ -329,6 +344,7 @@ const ProductMaster = () => {
                     <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{product.productCode || product.code || '-'}</TableCell>
                     <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{product.sku || '-'}</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 600 }}>{product.mrp ? money(product.mrp) : '-'}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>{product.perPieceWeightGram ?? '-'}</TableCell>
                     <TableCell>{product.companyId?.name || '-'}</TableCell>
                     <TableCell>
                       <Chip
@@ -346,6 +362,11 @@ const ProductMaster = () => {
                         <Tooltip title="Edit Product">
                           <IconButton size="small" onClick={() => openEdit(product)}>
                             <EditIcon fontSize="small" sx={{ color: '#1F4E79' }} />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Product Details">
+                          <IconButton size="small" onClick={() => setDetailDialog(product)}>
+                            <ViewIcon fontSize="small" sx={{ color: '#047857' }} />
                           </IconButton>
                         </Tooltip>
                         {isSuperAdmin() && (
@@ -394,6 +415,9 @@ const ProductMaster = () => {
               <TextField fullWidth label="MRP (optional)" type="number" value={form.mrp} onChange={(e) => setForm((f) => ({ ...f, mrp: e.target.value }))} inputProps={{ min: 0, step: '0.01' }} helperText="Leave empty if MRP varies" />
             </Grid>
             <Grid item xs={6}>
+              <TextField fullWidth label="Per Piece Weight (Gram)" type="number" value={form.perPieceWeightGram} onChange={(e) => setForm((f) => ({ ...f, perPieceWeightGram: e.target.value }))} inputProps={{ min: 0, step: '0.0001' }} helperText="Optional" />
+            </Grid>
+            <Grid item xs={6}>
               <SearchableDropdown label="Company (optional)" value={form.companyId} onChange={(v) => setForm((f) => ({ ...f, companyId: v }))} options={companies} />
             </Grid>
             {formDialog !== 'create' && (
@@ -418,6 +442,20 @@ const ProductMaster = () => {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={!!detailDialog} onClose={() => setDetailDialog(null)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+        <DialogTitle sx={{ fontWeight: 800 }}>Product Details</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 0.25 }}>
+            <Grid item xs={12}><Typography variant="caption" color="#6B7280" fontWeight={700}>PRODUCT NAME</Typography><Typography fontWeight={700}>{detailDialog?.name || detailDialog?.productName || '-'}</Typography></Grid>
+            <Grid item xs={6}><Typography variant="caption" color="#6B7280" fontWeight={700}>MRP</Typography><Typography fontWeight={700}>{detailDialog?.mrp ? money(detailDialog.mrp) : '-'}</Typography></Grid>
+            <Grid item xs={6}><Typography variant="caption" color="#6B7280" fontWeight={700}>PER PIECE WEIGHT (GRAM)</Typography><Typography fontWeight={700}>{detailDialog?.perPieceWeightGram ?? '-'}</Typography></Grid>
+            <Grid item xs={6}><Typography variant="caption" color="#6B7280" fontWeight={700}>PRODUCT CODE</Typography><Typography>{detailDialog?.productCode || detailDialog?.code || '-'}</Typography></Grid>
+            <Grid item xs={6}><Typography variant="caption" color="#6B7280" fontWeight={700}>SKU</Typography><Typography>{detailDialog?.sku || '-'}</Typography></Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}><Button variant="outlined" onClick={() => setDetailDialog(null)}>Close</Button></DialogActions>
+      </Dialog>
+
       {/* Deactivate Confirmation */}
       <Dialog open={!!deleteDialog} onClose={() => setDeleteDialog(null)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
         <DialogTitle sx={{ fontWeight: 800 }}>Deactivate Product</DialogTitle>
@@ -438,7 +476,7 @@ const ProductMaster = () => {
         <DialogTitle sx={{ fontWeight: 800 }}>Bulk Import Products</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="#6B7280" mb={2}>
-            Upload an Excel file (.xlsx, .xls, .csv) with columns: Product Name*, Product Code, SKU, MRP, Company.
+            Upload an Excel file (.xlsx, .xls, .csv) with columns: Product Name*, Product Code, SKU, MRP, Per Piece Weight (Gram), Company.
             Download the sample file for the correct format.
           </Typography>
           <Grid container spacing={2}>
@@ -489,6 +527,7 @@ const ProductMaster = () => {
                         <TableCell sx={{ fontWeight: 700 }}>Code</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>SKU</TableCell>
                         <TableCell sx={{ fontWeight: 700 }} align="right">MRP</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }} align="right">Per Piece Weight (Gram)</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                       </TableRow>
@@ -501,6 +540,7 @@ const ProductMaster = () => {
                           <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{row.productCode || '-'}</TableCell>
                           <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{row.sku || '-'}</TableCell>
                           <TableCell align="right">{row.mrp !== null && row.mrp !== undefined ? money(row.mrp) : '-'}</TableCell>
+                          <TableCell align="right">{row.perPieceWeightGram ?? '-'}</TableCell>
                           <TableCell>{row.companyName || '-'}</TableCell>
                           <TableCell>
                             <Tooltip title={row.reason || row.status}>
